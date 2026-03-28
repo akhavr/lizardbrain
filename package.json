@@ -31,5 +31,9 @@
   },
   "engines": {
     "node": ">=18.0.0"
+  },
+  "optionalDependencies": {
+    "better-sqlite3": "^12.8.0",
+    "sqlite-vec": "^0.1.7"
   }
 }

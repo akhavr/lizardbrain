@@ -10,6 +10,7 @@ const fs = require('fs');
 
 const chatmem = require('../src/index');
 const store = require('../src/store');
+const { createDriver, esc } = require('../src/driver');
 
 const TEST_DIR = path.join(__dirname, '.test-data');
 const SOURCE_DB = path.join(TEST_DIR, 'source.db');
@@ -269,6 +270,120 @@ function testConversationFilter() {
   assert(!messages.some(m => m.content.includes('secrets')), 'DM content excluded');
 }
 
+function testCliDriver() {
+  console.log('\n--- Test: CliDriver ---');
+
+  const driver = createDriver(MEMORY_DB, { forceBackend: 'cli' });
+
+  assert(driver.backend === 'cli', 'Backend is cli');
+  assert(driver.capabilities.inProcess === false, 'inProcess is false');
+  assert(driver.capabilities.vectors === false, 'vectors is false');
+  assert(driver.capabilities.transactions === false, 'transactions is false');
+
+  // Read (COUNT)
+  const rows = driver.read('SELECT COUNT(*) as c FROM members');
+  assert(Array.isArray(rows), 'read returns array');
+  assert(rows.length === 1 && rows[0].c !== undefined, 'read returns count row');
+
+  // Write (INSERT then DELETE)
+  driver.write("INSERT INTO members (username, display_name, first_seen, last_seen) VALUES ('cli_test_user', 'CLI Test User', '2026-01-01', '2026-01-01')");
+  const inserted = driver.read("SELECT id FROM members WHERE username='cli_test_user'");
+  assert(inserted.length === 1, 'INSERT via write succeeded');
+
+  driver.write("DELETE FROM members WHERE username='cli_test_user'");
+  const deleted = driver.read("SELECT id FROM members WHERE username='cli_test_user'");
+  assert(deleted.length === 0, 'DELETE via write succeeded');
+
+  // run() is alias for write
+  driver.run("INSERT INTO members (username, display_name, first_seen, last_seen) VALUES ('cli_run_user', 'CLI Run User', '2026-01-01', '2026-01-01')");
+  const runInserted = driver.read("SELECT id FROM members WHERE username='cli_run_user'");
+  assert(runInserted.length === 1, 'run() inserts row');
+  driver.write("DELETE FROM members WHERE username='cli_run_user'");
+
+  // transaction just calls fn()
+  let called = false;
+  const txResult = driver.transaction(() => { called = true; return 42; });
+  assert(called === true, 'transaction calls fn');
+  assert(txResult === 42, 'transaction returns fn result');
+
+  // close is a noop
+  driver.close();
+  assert(true, 'close() does not throw');
+
+  // esc() — single quotes
+  assert(esc("it's fine") === "it''s fine", "esc handles single quotes");
+  assert(esc(null) === '', 'esc handles null');
+  assert(esc(undefined) === '', 'esc handles undefined');
+  assert(esc('no quotes') === 'no quotes', 'esc leaves clean strings alone');
+}
+
+function testBetterSqliteDriver() {
+  console.log('\n--- Test: BetterSqliteDriver ---');
+
+  let BetterSqlite3;
+  try {
+    BetterSqlite3 = require('better-sqlite3');
+  } catch (_) {
+    console.log('  SKIP: better-sqlite3 not installed');
+    return;
+  }
+
+  const driver = createDriver(MEMORY_DB);
+
+  assert(driver.backend === 'better-sqlite3', 'Backend is better-sqlite3');
+  assert(driver.capabilities.inProcess === true, 'inProcess is true');
+  assert(driver.capabilities.transactions === true, 'transactions is true');
+  // vectors may or may not be true depending on sqlite-vec; just check it's a boolean
+  assert(typeof driver.capabilities.vectors === 'boolean', 'vectors capability is boolean');
+
+  // Read
+  const rows = driver.read('SELECT COUNT(*) as c FROM members');
+  assert(Array.isArray(rows) && rows.length === 1, 'read returns result');
+
+  // Parameterized read with ? placeholders
+  const paramRows = driver.read('SELECT * FROM members WHERE display_name = ?', ['Alice']);
+  assert(Array.isArray(paramRows), 'parameterized read returns array');
+
+  // Write with params
+  driver.write(
+    "INSERT INTO members (username, display_name, first_seen, last_seen) VALUES (?, ?, ?, ?)",
+    ['bsql_test_user', 'BSql Test User', '2026-01-01', '2026-01-01']
+  );
+  const inserted = driver.read('SELECT id FROM members WHERE username = ?', ['bsql_test_user']);
+  assert(inserted.length === 1, 'write with params inserted row');
+
+  // run() is alias for write
+  driver.run('DELETE FROM members WHERE username = ?', ['bsql_test_user']);
+  const afterDelete = driver.read('SELECT id FROM members WHERE username = ?', ['bsql_test_user']);
+  assert(afterDelete.length === 0, 'run() with params deleted row');
+
+  // Transaction — both inserts committed atomically
+  driver.transaction(() => {
+    driver.write(
+      "INSERT INTO members (username, display_name, first_seen, last_seen) VALUES (?, ?, ?, ?)",
+      ['tx_user_1', 'TX User 1', '2026-01-01', '2026-01-01']
+    );
+    driver.write(
+      "INSERT INTO members (username, display_name, first_seen, last_seen) VALUES (?, ?, ?, ?)",
+      ['tx_user_2', 'TX User 2', '2026-01-01', '2026-01-01']
+    );
+  });
+  const txRows = driver.read("SELECT id FROM members WHERE username IN ('tx_user_1', 'tx_user_2')");
+  assert(txRows.length === 2, 'transaction committed both inserts');
+
+  // Cleanup
+  driver.write("DELETE FROM members WHERE username IN ('tx_user_1', 'tx_user_2')");
+
+  // _db is exposed for raw access
+  assert(driver._db !== undefined, '_db is exposed');
+
+  // dbPath is stored
+  assert(driver.dbPath === MEMORY_DB, 'dbPath is stored on driver');
+
+  driver.close();
+  assert(true, 'close() does not throw');
+}
+
 async function testUrlEnrichment() {
   console.log('\n--- Test: URL enrichment ---');
 
@@ -307,6 +422,8 @@ async function runAll() {
   testConfidenceFiltering();
   testRoster();
   testConversationFilter();
+  testCliDriver();
+  testBetterSqliteDriver();
   await testUrlEnrichment();
 
   console.log(`\n=== Results: ${passed} passed, ${failed} failed ===\n`);
