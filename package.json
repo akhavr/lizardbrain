@@ -1,7 +1,7 @@
 {
   "name": "clawmem",
-  "version": "0.2.0",
-  "description": "Lightweight structured memory extraction for community chats. Zero dependencies, model-agnostic.",
+  "version": "0.3.0",
+  "description": "Lightweight structured memory extraction for community chats. Hybrid search, model-agnostic.",
   "main": "src/index.js",
   "bin": {
     "clawmem": "src/cli.js"
@@ -21,7 +21,9 @@
     "fts5",
     "llm",
     "knowledge-base",
-    "openclaw"
+    "openclaw",
+    "vector",
+    "hybrid-search"
   ],
   "author": "Oleksii Nikitin",
   "license": "MIT",

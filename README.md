@@ -4,12 +4,18 @@ Lightweight structured memory for community chats. Reads messages from any sourc
 
 Born from the [OpenClaw](https://github.com/open-claw/openclaw) ecosystem — built to give AI agents persistent memory of group conversations. Works standalone with any chat source and any LLM provider.
 
-**Zero dependencies.** Node.js built-in modules + system `sqlite3` CLI. Nothing to install.
+**Two tiers, one codebase.** Core tier: zero dependencies, FTS5 keyword search. Vector tier: add `better-sqlite3` + `sqlite-vec` for hybrid search (FTS5 + vector kNN + RRF merge). Auto-detects available deps at startup.
 
 ## How It Works
 
 ```
 [Chat Source] → [Adapter] → [LLM Extraction] → [SQLite + FTS5]
+                                                       ↓
+                                          (if better-sqlite3 + sqlite-vec)
+                                                       ↓
+                                               [Embedding Pipeline] → [vec0 tables]
+                                                       ↓
+                                               [Hybrid Search: FTS5 + kNN + RRF]
 ```
 
 1. **Adapter** reads new messages from your chat database (SQLite, JSONL, or custom)
@@ -35,6 +41,15 @@ node src/cli.js init
 # Run extraction
 CLAWMEM_LLM_API_KEY=your-key node src/cli.js extract
 
+# Optional: enable hybrid vector search
+npm install better-sqlite3 sqlite-vec
+
+# Add embedding config to clawmem.json:
+#   "embedding": { "enabled": true, "baseUrl": "...", "model": "..." }
+
+# Embed existing knowledge
+CLAWMEM_EMBEDDING_API_KEY=your-key node src/cli.js embed --backfill
+
 # Query
 node src/cli.js stats
 node src/cli.js search "RAG pipeline"
@@ -54,6 +69,12 @@ Create `clawmem.json` in your working directory:
   "llm": {
     "baseUrl": "https://api.openai.com/v1",
     "model": "gpt-5-nano"
+  },
+
+  "embedding": {
+    "enabled": true,
+    "baseUrl": "https://api.openai.com/v1",
+    "model": "text-embedding-3-small"
   },
 
   "source": {
@@ -91,6 +112,18 @@ clawmem works with any OpenAI-compatible chat completions API. Pick whatever fit
 | LM Studio | `http://localhost:1234/v1` | any local model | free (local) |
 
 For extraction tasks, cheap/fast models work great. You don't need a frontier model to pull facts out of chat messages.
+
+### Embedding Providers
+
+When hybrid search is enabled, clawmem needs an embedding API. Works with any OpenAI-compatible `/v1/embeddings` endpoint:
+
+| Provider | `embedding.baseUrl` | Recommended model | Dimensions |
+|----------|---------------------|-------------------|------------|
+| OpenAI | `https://api.openai.com/v1` | `text-embedding-3-small` | 1536 |
+| Gemini | `https://generativelanguage.googleapis.com/v1beta/openai` | `text-embedding-004` | 768 |
+| Ollama | `http://localhost:11434/v1` | `nomic-embed-text` | 768 |
+
+You can mix providers — e.g., cheap LLM (Groq) for extraction + quality embeddings (OpenAI) for search. See `examples/clawmem-mixed.json`.
 
 ### Source Adapters
 
@@ -173,12 +206,13 @@ module.exports = {
 ## CLI
 
 ```
-clawmem init [--force]                    Create memory database
-clawmem extract [--dry-run] [--reprocess] Run extraction pipeline
-clawmem stats                             Show database statistics
-clawmem search <query>                    Full-text search facts and topics
-clawmem who <keyword>                     Find members by expertise
-clawmem roster [--output path]            Generate compact member roster
+clawmem init [--force]                         Create memory database
+clawmem extract [--dry-run] [--reprocess]      Run extraction pipeline
+clawmem embed [--stats] [--rebuild]            Manage vector embeddings
+clawmem stats                                  Show database statistics
+clawmem search <query> [--json] [--fts-only]   Search knowledge (hybrid or FTS5)
+clawmem who <keyword>                          Find members by expertise
+clawmem roster [--output path]                 Generate compact member roster
 ```
 
 ## Programmatic API
@@ -189,32 +223,27 @@ const clawmem = require('clawmem');
 // Initialize
 clawmem.init('./memory.db');
 
-// Create adapter
+// Create adapter + driver
 const adapter = clawmem.adapters.sqlite.create({
   path: './chat.db',
   table: 'messages',
   columns: { id: 'id', content: 'text', sender: 'author', timestamp: 'created_at' },
 });
+const driver = clawmem.createDriver('./memory.db');
 
 // Extract
-await clawmem.extract(adapter, './memory.db', {
-  llm: {
-    baseUrl: 'https://api.openai.com/v1',
-    apiKey: process.env.OPENAI_API_KEY,
-    model: 'gpt-5-nano',
-  },
+await clawmem.extract(adapter, driver, {
+  llm: { baseUrl: 'https://api.openai.com/v1', apiKey: process.env.OPENAI_API_KEY, model: 'gpt-5-nano' },
 });
 
-// Query
-const facts = clawmem.query.searchFacts('./memory.db', 'kubernetes');
-const highConf = clawmem.query.searchFacts('./memory.db', 'kubernetes', 15, 0.75); // confidence >= 0.75
-const experts = clawmem.query.whoKnows('./memory.db', 'python');
-const topics = clawmem.query.searchTopics('./memory.db', 'deployment');
-const stats = clawmem.query.getStats('./memory.db');
+// Search (hybrid when vectors available, FTS5 fallback)
+const { mode, results } = await clawmem.search(driver, 'kubernetes', { limit: 5 });
 
-// Generate member roster
-const roster = clawmem.query.generateRoster('./memory.db');
-fs.writeFileSync('./MEMBERS.md', roster.content);
+// Query helpers
+const facts = clawmem.query.searchFacts(driver, 'kubernetes');
+const experts = clawmem.query.whoKnows(driver, 'python');
+
+driver.close();
 ```
 
 ## URL Enrichment
@@ -271,7 +300,7 @@ Filter by confidence in queries:
 
 ```js
 // Only high-confidence facts
-clawmem.query.searchFacts('./memory.db', 'pricing', 15, 0.75);
+clawmem.query.searchFacts(driver, 'pricing', 15, 0.75);
 ```
 
 ## Cron Setup
@@ -279,6 +308,9 @@ clawmem.query.searchFacts('./memory.db', 'pricing', 15, 0.75);
 ```bash
 # Every 2 hours — gives enough messages per batch for good extraction quality
 0 */2 * * * cd /path/to/project && CLAWMEM_LLM_API_KEY=key node src/cli.js extract >> /tmp/clawmem.log 2>&1
+
+# With hybrid search enabled
+0 */2 * * * cd /path/to/project && CLAWMEM_LLM_API_KEY=key CLAWMEM_EMBEDDING_API_KEY=ekey node src/cli.js extract >> /tmp/clawmem.log 2>&1
 
 # With auto-roster generation
 0 */2 * * * cd /path/to/project && CLAWMEM_LLM_API_KEY=key node src/cli.js extract --roster ./MEMBERS.md >> /tmp/clawmem.log 2>&1
@@ -294,7 +326,9 @@ clawmem creates these tables in SQLite:
 | `facts` | category, content, source member, tags, confidence, date |
 | `topics` | name, summary, participants, tags, date |
 | `extraction_state` | cursor position, run counters |
+| `clawmem_meta` | key-value store for embedding model, dimensions |
 | `*_fts` | FTS5 full-text search indexes (auto-synced via triggers) |
+| `*_vec` | vec0 vector tables for kNN search (created on first embed) |
 
 Query directly:
 
@@ -306,8 +340,16 @@ sqlite3 -json clawmem.db "SELECT name, summary FROM topics ORDER BY created_at D
 
 ## Requirements
 
+**Core tier (zero dependencies):**
 - Node.js >= 18 (uses built-in `fetch`)
 - `sqlite3` CLI with FTS5 support (included on macOS and most Linux distros)
+
+**Vector tier (optional, for hybrid search):**
+- `better-sqlite3` — in-process SQLite driver
+- `sqlite-vec` — SQLite extension for vector search
+- An embedding API endpoint (OpenAI, Gemini, Ollama, etc.)
+
+Install: `npm install better-sqlite3 sqlite-vec`
 
 ## Background
 
