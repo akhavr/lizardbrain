@@ -5,6 +5,7 @@
 const llm = require('./llm');
 const store = require('./store');
 const urlEnricher = require('./enrichers/url');
+const { getProfile } = require('./profiles');
 
 async function run(adapter, driver, config, options = {}) {
   const { dryRun = false, reprocess = false, rosterPath = null, enrichUrls = true, noEmbed = false } = options;
@@ -12,9 +13,22 @@ async function run(adapter, driver, config, options = {}) {
 
   const log = (msg) => console.log(msg);
 
+  // Resolve profile: config → DB meta → default "knowledge"
+  let profileName = config.profile || null;
+  if (!profileName) {
+    const meta = driver.read("SELECT value FROM lizardbrain_meta WHERE key = 'profile_name'");
+    profileName = meta[0]?.value || 'knowledge';
+  }
+  const profileConfig = getProfile(profileName);
+
+  // Override with config-level entity/category customization
+  if (config.entities) profileConfig.entities = config.entities;
+  if (config.factCategories) profileConfig.factCategories = config.factCategories;
+
   log(`[${new Date().toISOString()}] lizardbrain extraction`);
   log(`Memory DB: ${driver.dbPath}`);
   log(`Backend: ${driver.backend}`);
+  log(`Profile: ${profileName}`);
   log(`Source: ${adapter.name}`);
 
   // Validate adapter
@@ -58,6 +72,7 @@ async function run(adapter, driver, config, options = {}) {
   log(`Processing ${batches.length} batch(es)...`);
 
   let totalFacts = 0, totalTopics = 0, totalMembers = 0, embedded = 0;
+  let totalDecisions = 0, totalTasks = 0, totalQuestions = 0, totalEvents = 0;
   let maxId = lastId;
 
   for (let i = 0; i < batches.length; i++) {
@@ -84,15 +99,25 @@ async function run(adapter, driver, config, options = {}) {
     }
 
     try {
-      const extracted = await llm.extract(batch, config.llm);
+      const llmConfig = { ...config.llm, profileConfig };
+      const extracted = await llm.extract(batch, llmConfig);
       const messageDate = batch[0].timestamp?.split('T')[0] || new Date().toISOString().split('T')[0];
 
       const result = store.processExtraction(driver, extracted, messageDate);
       totalFacts += result.totalFacts;
       totalTopics += result.totalTopics;
       totalMembers += result.totalMembers;
+      totalDecisions += result.totalDecisions;
+      totalTasks += result.totalTasks;
+      totalQuestions += result.totalQuestions;
+      totalEvents += result.totalEvents;
 
-      log(`  Extracted: ${result.totalMembers} members, ${result.totalFacts} facts, ${result.totalTopics} topics`);
+      const parts = [`${result.totalMembers} members`, `${result.totalFacts} facts`, `${result.totalTopics} topics`];
+      if (result.totalDecisions) parts.push(`${result.totalDecisions} decisions`);
+      if (result.totalTasks) parts.push(`${result.totalTasks} tasks`);
+      if (result.totalQuestions) parts.push(`${result.totalQuestions} questions`);
+      if (result.totalEvents) parts.push(`${result.totalEvents} events`);
+      log(`  Extracted: ${parts.join(', ')}`);
 
       // Only advance cursor on success
       maxId = batchMaxId > maxId ? batchMaxId : maxId;
@@ -113,19 +138,24 @@ async function run(adapter, driver, config, options = {}) {
       messagesProcessed: messages.length,
       factsExtracted: totalFacts,
       topicsExtracted: totalTopics,
+      decisionsExtracted: totalDecisions,
+      tasksExtracted: totalTasks,
+      questionsExtracted: totalQuestions,
+      eventsExtracted: totalEvents,
     });
   }
 
   // Generate roster file if configured
   if (!dryRun && rosterPath) {
     const fs = require('fs');
-    const roster = store.generateRoster(driver);
+    const roster = store.generateRoster(driver, { memberLabels: profileConfig.memberLabels });
     fs.writeFileSync(rosterPath, roster.content);
     log(`Roster: ${roster.count} members → ${rosterPath}`);
   }
 
   // Auto-embed new records if configured
-  if (!dryRun && !noEmbed && config.embedding?.enabled && driver.capabilities.vectors && totalFacts + totalTopics + totalMembers > 0) {
+  const totalNew = totalFacts + totalTopics + totalMembers + totalDecisions + totalTasks + totalQuestions + totalEvents;
+  if (!dryRun && !noEmbed && config.embedding?.enabled && driver.capabilities.vectors && totalNew > 0) {
     try {
       const embeddings = require('./embeddings');
       log('\nAuto-embedding new records...');
@@ -145,12 +175,22 @@ async function run(adapter, driver, config, options = {}) {
     facts: totalFacts,
     topics: totalTopics,
     members: totalMembers,
+    decisions: totalDecisions,
+    tasks: totalTasks,
+    questions: totalQuestions,
+    events: totalEvents,
     embedded,
     maxId,
     dryRun,
+    profile: profileName,
   };
 
-  log(`\nDone: ${messages.length} messages → ${totalFacts} facts, ${totalTopics} topics, ${totalMembers} members`);
+  const doneParts = [`${totalFacts} facts`, `${totalTopics} topics`, `${totalMembers} members`];
+  if (totalDecisions) doneParts.push(`${totalDecisions} decisions`);
+  if (totalTasks) doneParts.push(`${totalTasks} tasks`);
+  if (totalQuestions) doneParts.push(`${totalQuestions} questions`);
+  if (totalEvents) doneParts.push(`${totalEvents} events`);
+  log(`\nDone: ${messages.length} messages → ${doneParts.join(', ')}`);
   if (dryRun) log('[DRY RUN — nothing written]');
 
   return summary;

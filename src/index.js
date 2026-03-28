@@ -1,12 +1,12 @@
 /**
- * lizardbrain — Lightweight structured memory extraction for community chats.
+ * lizardbrain — Persistent memory for group chats.
  *
  * Usage (programmatic):
  *
  *   const lizardbrain = require('lizardbrain');
  *
- *   // Initialize database
- *   lizardbrain.init('./my-memory.db');
+ *   // Initialize database with profile
+ *   lizardbrain.init('./my-memory.db', { profile: 'team' });
  *
  *   // Create a source adapter
  *   const adapter = lizardbrain.adapters.sqlite.create({
@@ -34,6 +34,7 @@ const schema = require('./schema');
 const extractor = require('./extractor');
 const store = require('./store');
 const config = require('./config');
+const profiles = require('./profiles');
 const sqliteAdapter = require('./adapters/sqlite');
 const jsonlAdapter = require('./adapters/jsonl');
 const urlEnricher = require('./enrichers/url');
@@ -44,6 +45,10 @@ const embeddings = require('./embeddings');
 module.exports = {
   // Schema
   init: schema.init,
+  migrate: schema.migrate,
+
+  // Profiles
+  profiles,
 
   // Extraction
   extract: extractor.run,
@@ -61,6 +66,10 @@ module.exports = {
     searchFacts: store.searchFacts,
     searchTopics: store.searchTopics,
     searchMembers: store.searchMembers,
+    searchDecisions: store.searchDecisions,
+    searchTasks: store.searchTasks,
+    searchQuestions: store.searchQuestions,
+    searchEvents: store.searchEvents,
     whoKnows: store.whoKnows,
     getStats: store.getStats,
     generateRoster: store.generateRoster,

@@ -11,6 +11,9 @@ const fs = require('fs');
 const lizardbrain = require('../src/index');
 const store = require('../src/store');
 const { createDriver, esc } = require('../src/driver');
+const profiles = require('../src/profiles');
+const { buildPrompt } = require('../src/llm');
+const { migrate } = require('../src/schema');
 
 const TEST_DIR = path.join(__dirname, '.test-data');
 const SOURCE_DB = path.join(TEST_DIR, 'source.db');
@@ -62,17 +65,28 @@ function cleanup() {
 function testInit() {
   console.log('\n--- Test: init ---');
 
-  const result = lizardbrain.init(MEMORY_DB);
+  const result = lizardbrain.init(MEMORY_DB, { profile: 'team' });
   assert(result.created === true, 'Database created');
   assert(fs.existsSync(MEMORY_DB), 'File exists on disk');
+  assert(result.message.includes('team'), 'Init message includes profile name');
 
   // Verify schema
   const tables = execSync(`sqlite3 "${MEMORY_DB}" ".tables"`, { encoding: 'utf-8' });
   assert(tables.includes('members'), 'members table exists');
   assert(tables.includes('facts'), 'facts table exists');
   assert(tables.includes('topics'), 'topics table exists');
+  assert(tables.includes('decisions'), 'decisions table exists');
+  assert(tables.includes('tasks'), 'tasks table exists');
+  assert(tables.includes('questions'), 'questions table exists');
+  assert(tables.includes('events'), 'events table exists');
   assert(tables.includes('facts_fts'), 'FTS tables exist');
+  assert(tables.includes('decisions_fts'), 'decisions_fts table exists');
+  assert(tables.includes('tasks_fts'), 'tasks_fts table exists');
   assert(tables.includes('extraction_state'), 'extraction_state table exists');
+
+  // Verify profile stored in meta
+  const profileMeta = execSync(`sqlite3 -json "${MEMORY_DB}" "SELECT value FROM lizardbrain_meta WHERE key = 'profile_name'"`, { encoding: 'utf-8' });
+  assert(profileMeta.includes('team'), 'Profile name stored in meta');
 
   // Idempotent
   const result2 = lizardbrain.init(MEMORY_DB);
@@ -228,13 +242,18 @@ function testRoster() {
 
   const memDriver = createDriver(MEMORY_DB);
   const roster = store.generateRoster(memDriver);
-  memDriver.close();
 
   assert(roster.count >= 2, `Roster has ${roster.count} members (expected >= 2)`);
-  assert(roster.content.startsWith('# Community Members'), 'Roster starts with header');
+  assert(roster.content.startsWith('# Members'), 'Roster starts with default header');
+
+  // Custom title
+  const custom = store.generateRoster(memDriver, { title: 'Team Roster' });
+  assert(custom.content.startsWith('# Team Roster'), 'Roster supports custom title');
   assert(roster.content.includes('Alice'), 'Roster contains Alice');
   assert(roster.content.includes('Bob'), 'Roster contains Bob');
   assert(roster.content.includes('RAG'), 'Roster includes expertise');
+
+  memDriver.close();
 }
 
 function testConversationFilter() {
@@ -477,6 +496,244 @@ async function testUrlEnrichment() {
   assert(emptyResult.enriched === 0, 'Empty messages returns 0 enriched');
 }
 
+function testProfiles() {
+  console.log('\n--- Test: profiles ---');
+
+  // Profile definitions
+  assert(profiles.PROFILE_NAMES.includes('knowledge'), 'knowledge profile exists');
+  assert(profiles.PROFILE_NAMES.includes('team'), 'team profile exists');
+  assert(profiles.PROFILE_NAMES.includes('project'), 'project profile exists');
+  assert(profiles.PROFILE_NAMES.includes('full'), 'full profile exists');
+
+  // getProfile
+  const knowledge = profiles.getProfile('knowledge');
+  assert(knowledge.entities.includes('members'), 'knowledge has members');
+  assert(knowledge.entities.includes('facts'), 'knowledge has facts');
+  assert(knowledge.entities.includes('topics'), 'knowledge has topics');
+  assert(!knowledge.entities.includes('decisions'), 'knowledge does not have decisions');
+
+  const team = profiles.getProfile('team');
+  assert(team.entities.includes('decisions'), 'team has decisions');
+  assert(team.entities.includes('tasks'), 'team has tasks');
+  assert(!team.entities.includes('questions'), 'team does not have questions');
+
+  const project = profiles.getProfile('project');
+  assert(project.entities.includes('questions'), 'project has questions');
+  assert(!project.entities.includes('topics'), 'project does not have topics');
+
+  const full = profiles.getProfile('full');
+  assert(full.entities.length === profiles.ALL_ENTITIES.length, 'full has all entity types');
+
+  // custom profile
+  const custom = profiles.getProfile('custom');
+  assert(custom.entities.length === profiles.ALL_ENTITIES.length, 'custom defaults to all entities');
+
+  // buildCustomProfile
+  const cp = profiles.buildCustomProfile(['members', 'facts', 'decisions']);
+  assert(cp.entities.length === 3, 'custom profile with 3 entities');
+
+  // Error on invalid profile
+  let threw = false;
+  try { profiles.getProfile('nonexistent'); } catch (e) { threw = true; }
+  assert(threw, 'getProfile throws on invalid profile name');
+
+  // Member labels differ between profiles
+  assert(knowledge.memberLabels.rosterProjects === 'builds', 'knowledge roster label is "builds"');
+  assert(team.memberLabels.rosterProjects === 'works on', 'team roster label is "works on"');
+  assert(project.memberLabels.rosterProjects === 'scope', 'project roster label is "scope"');
+
+  // Fact categories differ
+  assert(knowledge.factCategories.includes('tool'), 'knowledge has tool category');
+  assert(team.factCategories.includes('process'), 'team has process category');
+  assert(project.factCategories.includes('requirement'), 'project has requirement category');
+}
+
+function testNewEntities() {
+  console.log('\n--- Test: new entities ---');
+
+  const memDriver = createDriver(MEMORY_DB);
+
+  // Insert decisions
+  const result1 = store.processExtraction(memDriver, {
+    members: [],
+    facts: [],
+    topics: [],
+    decisions: [
+      { description: 'Use PostgreSQL instead of MySQL for the new service', participants: 'Alice, Bob', context: 'Need better JSON support', status: 'agreed', tags: 'database, migration' },
+      { description: 'Deploy to AWS instead of GCP', participants: 'Alice', context: 'Cost analysis showed 30% savings', status: 'proposed', tags: 'cloud, deployment' },
+    ],
+    tasks: [
+      { description: 'Migrate user service to PostgreSQL', assignee: 'Bob', deadline: '2026-04-15', status: 'open', source_member: 'Alice', tags: 'database' },
+    ],
+    questions: [
+      { question: 'What is the best way to handle database migrations?', asker: 'Bob', answer: 'Use Flyway or Liquibase', answered_by: 'Alice', status: 'answered', tags: 'database, migrations' },
+      { question: 'Should we use Kubernetes or ECS?', asker: 'Charlie', answer: null, answered_by: null, status: 'open', tags: 'infrastructure' },
+    ],
+    events: [
+      { name: 'Architecture Review Meeting', description: 'Review migration plan for Q2', event_date: '2026-04-01', location: 'Zoom', attendees: 'Alice, Bob, Charlie', tags: 'meeting, architecture' },
+    ],
+  }, '2026-03-28');
+
+  assert(result1.totalDecisions === 2, `Inserted ${result1.totalDecisions} decisions (expected 2)`);
+  assert(result1.totalTasks === 1, `Inserted ${result1.totalTasks} tasks (expected 1)`);
+  assert(result1.totalQuestions === 2, `Inserted ${result1.totalQuestions} questions (expected 2)`);
+  assert(result1.totalEvents === 1, `Inserted ${result1.totalEvents} events (expected 1)`);
+
+  // Dedup: insert same decision again
+  const result2 = store.processExtraction(memDriver, {
+    members: [], facts: [], topics: [],
+    decisions: [{ description: 'Use PostgreSQL instead of MySQL for the new service', participants: 'Alice, Bob', context: 'JSON support', status: 'agreed', tags: 'database' }],
+    tasks: [],
+    questions: [],
+    events: [],
+  }, '2026-03-28');
+  assert(result2.totalDecisions === 0, 'Decision dedup: exact match blocked');
+
+  // FTS search across new entities
+  const decisions = store.searchDecisions(memDriver, 'PostgreSQL');
+  assert(decisions.length >= 1, `FTS found ${decisions.length} PostgreSQL decisions (expected >= 1)`);
+
+  const tasks = store.searchTasks(memDriver, 'PostgreSQL');
+  assert(tasks.length >= 1, `FTS found ${tasks.length} PostgreSQL tasks (expected >= 1)`);
+
+  const questions = store.searchQuestions(memDriver, 'database');
+  assert(questions.length >= 1, `FTS found ${questions.length} database questions (expected >= 1)`);
+
+  const events = store.searchEvents(memDriver, 'Architecture');
+  assert(events.length >= 1, `FTS found ${events.length} Architecture events (expected >= 1)`);
+
+  // Stats should include new entity counts
+  const stats = store.getStats(memDriver);
+  assert(stats.decisions >= 2, `Stats shows ${stats.decisions} decisions (expected >= 2)`);
+  assert(stats.tasks >= 1, `Stats shows ${stats.tasks} tasks (expected >= 1)`);
+  assert(stats.questions >= 2, `Stats shows ${stats.questions} questions (expected >= 2)`);
+  assert(stats.events >= 1, `Stats shows ${stats.events} events (expected >= 1)`);
+  assert(stats.profile === 'team', `Stats shows profile: ${stats.profile} (expected team)`);
+
+  memDriver.close();
+}
+
+function testDynamicPrompt() {
+  console.log('\n--- Test: dynamic prompt ---');
+
+  const knowledge = profiles.getProfile('knowledge');
+  const prompt = buildPrompt('test messages', knowledge);
+  assert(prompt.includes('"members"'), 'knowledge prompt includes members');
+  assert(prompt.includes('"facts"'), 'knowledge prompt includes facts');
+  assert(prompt.includes('"topics"'), 'knowledge prompt includes topics');
+  assert(!prompt.includes('"decisions"'), 'knowledge prompt excludes decisions');
+  assert(!prompt.includes('"tasks"'), 'knowledge prompt excludes tasks');
+  assert(prompt.includes('tool, technique'), 'knowledge prompt has knowledge categories');
+
+  const team = profiles.getProfile('team');
+  const teamPrompt = buildPrompt('test messages', team);
+  assert(teamPrompt.includes('"decisions"'), 'team prompt includes decisions');
+  assert(teamPrompt.includes('"tasks"'), 'team prompt includes tasks');
+  assert(!teamPrompt.includes('"questions"'), 'team prompt excludes questions');
+  assert(teamPrompt.includes('process, technical'), 'team prompt has team categories');
+  assert(teamPrompt.includes('role/position'), 'team prompt uses role/position label');
+
+  const project = profiles.getProfile('project');
+  const projPrompt = buildPrompt('test messages', project);
+  assert(projPrompt.includes('"questions"'), 'project prompt includes questions');
+  assert(!projPrompt.includes('"topics"'), 'project prompt excludes topics');
+  assert(projPrompt.includes('requirement'), 'project prompt has requirement category');
+
+  const full = profiles.getProfile('full');
+  const fullPrompt = buildPrompt('test messages', full);
+  assert(fullPrompt.includes('"events"'), 'full prompt includes events');
+  assert(fullPrompt.includes('"questions"'), 'full prompt includes questions');
+  assert(fullPrompt.includes('"decisions"'), 'full prompt includes decisions');
+}
+
+function testProfileRoster() {
+  console.log('\n--- Test: profile roster ---');
+
+  const memDriver = createDriver(MEMORY_DB);
+
+  // Knowledge roster uses "builds" label
+  const knowledgeRoster = store.generateRoster(memDriver, {
+    memberLabels: profiles.getProfile('knowledge').memberLabels,
+  });
+  assert(knowledgeRoster.content.includes('builds:'), 'knowledge roster uses "builds:" label');
+
+  // Team roster uses "works on" label
+  const teamRoster = store.generateRoster(memDriver, {
+    memberLabels: profiles.getProfile('team').memberLabels,
+  });
+  assert(teamRoster.content.includes('works on:'), 'team roster uses "works on:" label');
+
+  // Project roster uses "scope" label
+  const projectRoster = store.generateRoster(memDriver, {
+    memberLabels: profiles.getProfile('project').memberLabels,
+  });
+  assert(projectRoster.content.includes('scope:'), 'project roster uses "scope:" label');
+
+  memDriver.close();
+}
+
+function testMigration() {
+  console.log('\n--- Test: migration ---');
+
+  // Create a v0.3-style database (no new tables, no profile meta)
+  const V03_DB = path.join(TEST_DIR, 'v03.db');
+  if (fs.existsSync(V03_DB)) fs.unlinkSync(V03_DB);
+  execSync(`sqlite3 "${V03_DB}"`, {
+    input: `
+      PRAGMA journal_mode=WAL;
+      CREATE TABLE members (id INTEGER PRIMARY KEY AUTOINCREMENT, username TEXT UNIQUE, display_name TEXT, expertise TEXT DEFAULT '', projects TEXT DEFAULT '', preferences TEXT DEFAULT '', first_seen TEXT, last_seen TEXT, updated_at TEXT DEFAULT (datetime('now')));
+      CREATE TABLE facts (id INTEGER PRIMARY KEY AUTOINCREMENT, category TEXT NOT NULL, content TEXT NOT NULL, source_member_id INTEGER, tags TEXT DEFAULT '', confidence REAL DEFAULT 0.8, message_date TEXT, created_at TEXT DEFAULT (datetime('now')));
+      CREATE TABLE topics (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL, summary TEXT, participants TEXT DEFAULT '', message_date TEXT, tags TEXT DEFAULT '', created_at TEXT DEFAULT (datetime('now')));
+      CREATE VIRTUAL TABLE members_fts USING fts5(username, display_name, expertise, projects, preferences, content='members', content_rowid='id');
+      CREATE VIRTUAL TABLE facts_fts USING fts5(category, content, tags, content='facts', content_rowid='id');
+      CREATE VIRTUAL TABLE topics_fts USING fts5(name, summary, participants, tags, content='topics', content_rowid='id');
+      CREATE TABLE extraction_state (id INTEGER PRIMARY KEY CHECK (id = 1), last_processed_id TEXT DEFAULT '0', total_messages_processed INTEGER DEFAULT 0, total_facts_extracted INTEGER DEFAULT 0, total_topics_extracted INTEGER DEFAULT 0, total_members_seen INTEGER DEFAULT 0, last_run_at TEXT, created_at TEXT DEFAULT (datetime('now')));
+      INSERT INTO extraction_state (id) VALUES (1);
+      CREATE TABLE lizardbrain_meta (key TEXT PRIMARY KEY, value TEXT, updated_at TEXT DEFAULT (datetime('now')));
+    `,
+    stdio: ['pipe', 'pipe', 'pipe'],
+  });
+
+  const driver = createDriver(V03_DB);
+  const result = migrate(driver);
+  assert(result.migrated === true, 'Migration ran successfully');
+
+  // Verify new tables exist
+  const tables = execSync(`sqlite3 "${V03_DB}" ".tables"`, { encoding: 'utf-8' });
+  assert(tables.includes('decisions'), 'decisions table created by migration');
+  assert(tables.includes('tasks'), 'tasks table created by migration');
+  assert(tables.includes('questions'), 'questions table created by migration');
+  assert(tables.includes('events'), 'events table created by migration');
+  assert(tables.includes('decisions_fts'), 'decisions_fts created by migration');
+
+  // Verify profile defaulted to knowledge
+  const profileMeta = driver.read("SELECT value FROM lizardbrain_meta WHERE key = 'profile_name'");
+  assert(profileMeta[0]?.value === 'knowledge', 'Migration defaults to knowledge profile');
+
+  // Verify schema version set
+  const version = driver.read("SELECT value FROM lizardbrain_meta WHERE key = 'schema_version'");
+  assert(version[0]?.value === '0.4', 'Schema version set to 0.4');
+
+  // Idempotent: running again should be a no-op
+  const result2 = migrate(driver);
+  assert(result2.migrated === false, 'Second migration is a no-op');
+
+  driver.close();
+}
+
+async function testNewEntityFtsSearch() {
+  console.log('\n--- Test: new entity FTS search ---');
+
+  const { search } = require('../src/search');
+  const memDriver = createDriver(MEMORY_DB);
+
+  // Search should find results across new entity types
+  const res = await search(memDriver, 'PostgreSQL', { limit: 10, ftsOnly: true });
+  const sources = res.results.map(r => r.source);
+  assert(sources.includes('decision') || sources.includes('task'), 'Search finds new entity types');
+  memDriver.close();
+}
+
 // --- Run ---
 
 async function runAll() {
@@ -484,15 +741,21 @@ async function runAll() {
   testInit();
   testAdapter();
   testJsonlAdapter();
+  testProfiles();
   testStore();
+  testNewEntities();
   testConfidenceFiltering();
   testRoster();
+  testProfileRoster();
+  testDynamicPrompt();
+  testMigration();
   testConversationFilter();
   testCliDriver();
   testBetterSqliteDriver();
   await testEmbeddings();
   testRRFMerge();
   await testFtsOnlySearch();
+  await testNewEntityFtsSearch();
   await testUrlEnrichment();
 
   console.log(`\n=== Results: ${passed} passed, ${failed} failed ===\n`);

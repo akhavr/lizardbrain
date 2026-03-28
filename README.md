@@ -2,11 +2,11 @@
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Node.js >= 18](https://img.shields.io/badge/node-%3E%3D18-brightgreen.svg)](https://nodejs.org)
-[![Version](https://img.shields.io/badge/version-0.3.0-orange.svg)](package.json)
+[![Version](https://img.shields.io/badge/version-0.4.0-orange.svg)](package.json)
 
 **Persistent memory for group chats.** Reads messages from any source, extracts structured knowledge via any LLM, stores it in SQLite with full-text and hybrid vector search.
 
-Give your AI agent a brain that remembers what your community talks about.
+Give your AI agent a brain that remembers what your group talks about.
 
 ```
 Chat Source  -->  Adapter  -->  LLM Extraction  -->  SQLite + FTS5
@@ -22,6 +22,8 @@ Chat Source  -->  Adapter  -->  LLM Extraction  -->  SQLite + FTS5
 
 ## Highlights
 
+- **Profile-driven** -- choose what to extract: knowledge communities, team chats, project groups, or define your own
+- **7 entity types** -- members, facts, topics, decisions, tasks, questions, events
 - **Model-agnostic** -- works with any OpenAI-compatible API (OpenAI, Gemini, Groq, Ollama, Mistral, etc.)
 - **Two tiers, one codebase** -- core tier has zero dependencies; add `better-sqlite3` + `sqlite-vec` for hybrid vector search
 - **Incremental** -- tracks a cursor, only processes new messages each run
@@ -41,7 +43,9 @@ git clone https://github.com/pandore/lizardbrain && cd lizardbrain
 cp examples/lizardbrain.json lizardbrain.json
 # Edit lizardbrain.json -- set your chat DB path and LLM provider
 
-node src/cli.js init
+node src/cli.js init              # Interactive profile picker
+# or: node src/cli.js init --profile team
+
 LIZARDBRAIN_LLM_API_KEY=your-key node src/cli.js extract
 
 # Query
@@ -60,6 +64,48 @@ LIZARDBRAIN_EMBEDDING_API_KEY=your-key node src/cli.js embed --backfill
 
 ---
 
+## Profiles
+
+Profiles control what entity types are extracted and how member fields are interpreted. Pick a profile at `init` time:
+
+| Profile | Entities | Best for |
+|---------|----------|----------|
+| `knowledge` | Members, Facts, Topics | Communities, interest groups |
+| `team` | Members, Facts, Topics, Decisions, Tasks | Teams, workplaces |
+| `project` | Members, Facts, Decisions, Tasks, Questions | Client work, project groups |
+| `full` | All 7 entity types | When you want everything |
+
+```bash
+node src/cli.js init --profile team
+# or run without --profile for interactive picker
+```
+
+The profile is stored in the database and used automatically on subsequent `extract` runs. You can also set it in config:
+
+```json
+{
+  "profile": "team"
+}
+```
+
+<details>
+<summary>Custom entity selection</summary>
+
+Override which entities are extracted in your config file:
+
+```json
+{
+  "profile": "team",
+  "entities": ["members", "facts", "decisions", "tasks"]
+}
+```
+
+Available entity types: `members`, `facts`, `topics`, `decisions`, `tasks`, `questions`, `events`.
+
+</details>
+
+---
+
 ## Configuration
 
 Create `lizardbrain.json` in your working directory:
@@ -69,6 +115,7 @@ Create `lizardbrain.json` in your working directory:
   "memoryDbPath": "./lizardbrain.db",
   "batchSize": 40,
   "minMessages": 5,
+  "profile": "knowledge",
 
   "llm": {
     "baseUrl": "https://api.openai.com/v1",
@@ -202,7 +249,7 @@ module.exports = {
 ## CLI Reference
 
 ```
-lizardbrain init [--force]                          Create memory database
+lizardbrain init [--force] [--profile <name>]       Create memory database
 lizardbrain extract [--dry-run] [--reprocess]       Run extraction pipeline
 lizardbrain embed [--stats] [--rebuild]             Manage vector embeddings
 lizardbrain stats                                   Show database statistics
@@ -214,6 +261,7 @@ lizardbrain roster [--output path]                  Generate compact member rost
 | Flag | Description |
 |------|-------------|
 | `--config <path>` | Path to config file |
+| `--profile <name>` | Set extraction profile (knowledge, team, project, full) |
 | `--roster <path>` | Generate roster after extraction |
 | `--no-enrich` | Skip URL metadata enrichment |
 | `--no-embed` | Skip auto-embedding after extraction |
@@ -229,6 +277,7 @@ lizardbrain roster [--output path]                  Generate compact member rost
 | `LIZARDBRAIN_EMBEDDING_BASE_URL` | Embedding API base URL |
 | `LIZARDBRAIN_EMBEDDING_MODEL` | Embedding model name |
 | `LIZARDBRAIN_DB_PATH` | Path to memory database |
+| `LIZARDBRAIN_PROFILE` | Extraction profile |
 
 ---
 
@@ -237,7 +286,7 @@ lizardbrain roster [--output path]                  Generate compact member rost
 ```js
 const lizardbrain = require('lizardbrain');
 
-lizardbrain.init('./memory.db');
+lizardbrain.init('./memory.db', { profile: 'team' });
 
 const adapter = lizardbrain.adapters.sqlite.create({
   path: './chat.db',
@@ -256,6 +305,8 @@ const { mode, results } = await lizardbrain.search(driver, 'kubernetes', { limit
 // Query helpers
 const facts = lizardbrain.query.searchFacts(driver, 'kubernetes');
 const experts = lizardbrain.query.whoKnows(driver, 'python');
+const decisions = lizardbrain.query.searchDecisions(driver, 'database');
+const tasks = lizardbrain.query.searchTasks(driver, 'migration');
 
 driver.close();
 ```
@@ -285,6 +336,10 @@ Designed to run on a cron every 1-2 hours:
 | **Members** | username, expertise, projects | Alice -- RAG, LangChain \| builds: pipeline |
 | **Facts** | category, content, confidence, tags | "LangChain works well with chunk size 512" (0.9) |
 | **Topics** | name, summary, participants | "RAG Pipeline Comparison" -- Alice, Bob |
+| **Decisions** | description, participants, context, status | "Use PostgreSQL instead of MySQL" (agreed) |
+| **Tasks** | description, assignee, deadline, status | "Migrate user service" -- Bob, due Apr 15 |
+| **Questions** | question, asker, answer, status | "Best way to handle migrations?" -- answered |
+| **Events** | name, date, location, attendees | "Architecture Review" -- Apr 1, Zoom |
 
 ### Confidence Scores
 
@@ -299,13 +354,13 @@ Designed to run on a cron every 1-2 hours:
 Generate a compact member roster for agent context windows (~30-50 tokens per member):
 
 ```
-# Community Members
+# Members
 
 - **Alice** -- RAG, LangChain, Python | builds: pipeline, search-tool
 - **Bob** -- LlamaIndex, embeddings | builds: pdf-processor
 ```
 
-At 100 members it's ~3,000 tokens -- cheap enough to always include in an agent's system prompt.
+At 100 members it's ~3,000 tokens -- cheap enough to always include in an agent's system prompt. Customize the header via the `title` option in the programmatic API.
 
 ```bash
 lizardbrain roster --output ./MEMBERS.md
@@ -320,8 +375,12 @@ lizardbrain roster --output ./MEMBERS.md
 | `members` | username, display_name, expertise, projects, first/last seen |
 | `facts` | category, content, source member, tags, confidence, date |
 | `topics` | name, summary, participants, tags, date |
+| `decisions` | description, participants, context, status, tags, date |
+| `tasks` | description, assignee, deadline, status, source member, tags |
+| `questions` | question, asker, answer, answered_by, status, tags |
+| `events` | name, description, event_date, location, attendees, tags |
 | `extraction_state` | cursor position, run counters |
-| `lizardbrain_meta` | key-value store (embedding model, dimensions) |
+| `lizardbrain_meta` | key-value store (profile, embedding model, dimensions) |
 | `*_fts` | FTS5 full-text search indexes (auto-synced via triggers) |
 | `*_vec` | vec0 vector tables for kNN search (created on first embed) |
 

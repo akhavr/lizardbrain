@@ -107,6 +107,142 @@ CREATE TRIGGER IF NOT EXISTS topics_au AFTER UPDATE ON topics BEGIN
   VALUES (new.id, new.name, new.summary, new.participants, new.tags);
 END;
 
+-- Decisions: group decisions and agreements
+CREATE TABLE IF NOT EXISTS decisions (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  description TEXT NOT NULL,
+  participants TEXT DEFAULT '',
+  context TEXT DEFAULT '',
+  status TEXT DEFAULT 'proposed',
+  tags TEXT DEFAULT '',
+  message_date TEXT,
+  created_at TEXT DEFAULT (datetime('now'))
+);
+
+-- Tasks: action items and assignments
+CREATE TABLE IF NOT EXISTS tasks (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  description TEXT NOT NULL,
+  assignee TEXT DEFAULT '',
+  deadline TEXT,
+  status TEXT DEFAULT 'open',
+  source_member_id INTEGER REFERENCES members(id),
+  tags TEXT DEFAULT '',
+  message_date TEXT,
+  created_at TEXT DEFAULT (datetime('now'))
+);
+
+-- Questions: asked and answered
+CREATE TABLE IF NOT EXISTS questions (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  question TEXT NOT NULL,
+  asker TEXT DEFAULT '',
+  answer TEXT,
+  answered_by TEXT DEFAULT '',
+  status TEXT DEFAULT 'open',
+  tags TEXT DEFAULT '',
+  message_date TEXT,
+  created_at TEXT DEFAULT (datetime('now'))
+);
+
+-- Events: meetings, deadlines, gatherings
+CREATE TABLE IF NOT EXISTS events (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  name TEXT NOT NULL,
+  description TEXT DEFAULT '',
+  event_date TEXT,
+  location TEXT DEFAULT '',
+  attendees TEXT DEFAULT '',
+  tags TEXT DEFAULT '',
+  message_date TEXT,
+  created_at TEXT DEFAULT (datetime('now'))
+);
+
+-- FTS5 indexes: decisions, tasks, questions, events
+CREATE VIRTUAL TABLE IF NOT EXISTS decisions_fts USING fts5(
+  description, context, participants, tags,
+  content='decisions', content_rowid='id'
+);
+
+CREATE VIRTUAL TABLE IF NOT EXISTS tasks_fts USING fts5(
+  description, assignee, tags,
+  content='tasks', content_rowid='id'
+);
+
+CREATE VIRTUAL TABLE IF NOT EXISTS questions_fts USING fts5(
+  question, answer, asker, tags,
+  content='questions', content_rowid='id'
+);
+
+CREATE VIRTUAL TABLE IF NOT EXISTS events_fts USING fts5(
+  name, description, attendees, tags,
+  content='events', content_rowid='id'
+);
+
+-- FTS sync triggers: decisions
+CREATE TRIGGER IF NOT EXISTS decisions_ai AFTER INSERT ON decisions BEGIN
+  INSERT INTO decisions_fts(rowid, description, context, participants, tags)
+  VALUES (new.id, new.description, new.context, new.participants, new.tags);
+END;
+CREATE TRIGGER IF NOT EXISTS decisions_ad AFTER DELETE ON decisions BEGIN
+  INSERT INTO decisions_fts(decisions_fts, rowid, description, context, participants, tags)
+  VALUES ('delete', old.id, old.description, old.context, old.participants, old.tags);
+END;
+CREATE TRIGGER IF NOT EXISTS decisions_au AFTER UPDATE ON decisions BEGIN
+  INSERT INTO decisions_fts(decisions_fts, rowid, description, context, participants, tags)
+  VALUES ('delete', old.id, old.description, old.context, old.participants, old.tags);
+  INSERT INTO decisions_fts(rowid, description, context, participants, tags)
+  VALUES (new.id, new.description, new.context, new.participants, new.tags);
+END;
+
+-- FTS sync triggers: tasks
+CREATE TRIGGER IF NOT EXISTS tasks_ai AFTER INSERT ON tasks BEGIN
+  INSERT INTO tasks_fts(rowid, description, assignee, tags)
+  VALUES (new.id, new.description, new.assignee, new.tags);
+END;
+CREATE TRIGGER IF NOT EXISTS tasks_ad AFTER DELETE ON tasks BEGIN
+  INSERT INTO tasks_fts(tasks_fts, rowid, description, assignee, tags)
+  VALUES ('delete', old.id, old.description, old.assignee, old.tags);
+END;
+CREATE TRIGGER IF NOT EXISTS tasks_au AFTER UPDATE ON tasks BEGIN
+  INSERT INTO tasks_fts(tasks_fts, rowid, description, assignee, tags)
+  VALUES ('delete', old.id, old.description, old.assignee, old.tags);
+  INSERT INTO tasks_fts(rowid, description, assignee, tags)
+  VALUES (new.id, new.description, new.assignee, new.tags);
+END;
+
+-- FTS sync triggers: questions
+CREATE TRIGGER IF NOT EXISTS questions_ai AFTER INSERT ON questions BEGIN
+  INSERT INTO questions_fts(rowid, question, answer, asker, tags)
+  VALUES (new.id, new.question, new.answer, new.asker, new.tags);
+END;
+CREATE TRIGGER IF NOT EXISTS questions_ad AFTER DELETE ON questions BEGIN
+  INSERT INTO questions_fts(questions_fts, rowid, question, answer, asker, tags)
+  VALUES ('delete', old.id, old.question, old.answer, old.asker, old.tags);
+END;
+CREATE TRIGGER IF NOT EXISTS questions_au AFTER UPDATE ON questions BEGIN
+  INSERT INTO questions_fts(questions_fts, rowid, question, answer, asker, tags)
+  VALUES ('delete', old.id, old.question, old.answer, old.asker, old.tags);
+  INSERT INTO questions_fts(rowid, question, answer, asker, tags)
+  VALUES (new.id, new.question, new.answer, new.asker, new.tags);
+END;
+
+-- FTS sync triggers: events
+CREATE TRIGGER IF NOT EXISTS events_ai AFTER INSERT ON events BEGIN
+  INSERT INTO events_fts(rowid, name, description, attendees, tags)
+  VALUES (new.id, new.name, new.description, new.attendees, new.tags);
+END;
+CREATE TRIGGER IF NOT EXISTS events_ad AFTER DELETE ON events BEGIN
+  INSERT INTO events_fts(events_fts, rowid, name, description, attendees, tags)
+  VALUES ('delete', old.id, old.name, old.description, old.attendees, old.tags);
+END;
+CREATE TRIGGER IF NOT EXISTS events_au AFTER UPDATE ON events BEGIN
+  INSERT INTO events_fts(events_fts, rowid, name, description, attendees, tags)
+  VALUES ('delete', old.id, old.name, old.description, old.attendees, old.tags);
+  INSERT INTO events_fts(rowid, name, description, attendees, tags)
+  VALUES (new.id, new.name, new.description, new.attendees, new.tags);
+END;
+
 -- Extraction state (singleton row)
 CREATE TABLE IF NOT EXISTS extraction_state (
   id INTEGER PRIMARY KEY CHECK (id = 1),
@@ -114,6 +250,10 @@ CREATE TABLE IF NOT EXISTS extraction_state (
   total_messages_processed INTEGER DEFAULT 0,
   total_facts_extracted INTEGER DEFAULT 0,
   total_topics_extracted INTEGER DEFAULT 0,
+  total_decisions_extracted INTEGER DEFAULT 0,
+  total_tasks_extracted INTEGER DEFAULT 0,
+  total_questions_extracted INTEGER DEFAULT 0,
+  total_events_extracted INTEGER DEFAULT 0,
   total_members_seen INTEGER DEFAULT 0,
   last_run_at TEXT,
   created_at TEXT DEFAULT (datetime('now'))
@@ -129,8 +269,9 @@ CREATE TABLE IF NOT EXISTS lizardbrain_meta (
 );
 `;
 
-function init(dbPath, { force = false } = {}) {
+function init(dbPath, { force = false, profile = 'knowledge' } = {}) {
   const fs = require('fs');
+  const { getProfile } = require('./profiles');
 
   if (force && fs.existsSync(dbPath)) {
     fs.unlinkSync(dbPath);
@@ -140,11 +281,136 @@ function init(dbPath, { force = false } = {}) {
     return { created: false, message: `Database already exists at ${dbPath}` };
   }
 
+  const profileConfig = getProfile(profile);
   const driver = createDriver(dbPath);
   driver.write(SCHEMA_SQL);
+
+  // Store profile and schema version in meta
+  const { esc } = require('./driver');
+  driver.write(`INSERT OR REPLACE INTO lizardbrain_meta (key, value, updated_at) VALUES ('profile_name', '${esc(profile)}', datetime('now'));`);
+  driver.write(`INSERT OR REPLACE INTO lizardbrain_meta (key, value, updated_at) VALUES ('profile_entities', '${esc(profileConfig.entities.join(','))}', datetime('now'));`);
+  driver.write(`INSERT OR REPLACE INTO lizardbrain_meta (key, value, updated_at) VALUES ('schema_version', '0.4', datetime('now'));`);
+
   driver.close();
 
-  return { created: true, message: `Database created at ${dbPath}` };
+  return { created: true, message: `Database created at ${dbPath} (profile: ${profile})` };
 }
 
-module.exports = { init, SCHEMA_SQL };
+/**
+ * Migrate a v0.3 database to v0.4 schema.
+ * Idempotent — safe to call on already-migrated databases.
+ */
+function migrate(driver) {
+  const { esc } = require('./driver');
+
+  // Check current schema version
+  const meta = driver.read("SELECT value FROM lizardbrain_meta WHERE key = 'schema_version'");
+  const version = meta[0]?.value;
+  if (version >= '0.4') return { migrated: false, message: 'Already at v0.4' };
+
+  // Create new tables (IF NOT EXISTS makes this idempotent)
+  const newTables = `
+    CREATE TABLE IF NOT EXISTS decisions (
+      id INTEGER PRIMARY KEY AUTOINCREMENT, description TEXT NOT NULL, participants TEXT DEFAULT '',
+      context TEXT DEFAULT '', status TEXT DEFAULT 'proposed', tags TEXT DEFAULT '',
+      message_date TEXT, created_at TEXT DEFAULT (datetime('now'))
+    );
+    CREATE TABLE IF NOT EXISTS tasks (
+      id INTEGER PRIMARY KEY AUTOINCREMENT, description TEXT NOT NULL, assignee TEXT DEFAULT '',
+      deadline TEXT, status TEXT DEFAULT 'open', source_member_id INTEGER REFERENCES members(id),
+      tags TEXT DEFAULT '', message_date TEXT, created_at TEXT DEFAULT (datetime('now'))
+    );
+    CREATE TABLE IF NOT EXISTS questions (
+      id INTEGER PRIMARY KEY AUTOINCREMENT, question TEXT NOT NULL, asker TEXT DEFAULT '',
+      answer TEXT, answered_by TEXT DEFAULT '', status TEXT DEFAULT 'open',
+      tags TEXT DEFAULT '', message_date TEXT, created_at TEXT DEFAULT (datetime('now'))
+    );
+    CREATE TABLE IF NOT EXISTS events (
+      id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL, description TEXT DEFAULT '',
+      event_date TEXT, location TEXT DEFAULT '', attendees TEXT DEFAULT '',
+      tags TEXT DEFAULT '', message_date TEXT, created_at TEXT DEFAULT (datetime('now'))
+    );
+
+    CREATE VIRTUAL TABLE IF NOT EXISTS decisions_fts USING fts5(
+      description, context, participants, tags, content='decisions', content_rowid='id');
+    CREATE VIRTUAL TABLE IF NOT EXISTS tasks_fts USING fts5(
+      description, assignee, tags, content='tasks', content_rowid='id');
+    CREATE VIRTUAL TABLE IF NOT EXISTS questions_fts USING fts5(
+      question, answer, asker, tags, content='questions', content_rowid='id');
+    CREATE VIRTUAL TABLE IF NOT EXISTS events_fts USING fts5(
+      name, description, attendees, tags, content='events', content_rowid='id');
+
+    CREATE TRIGGER IF NOT EXISTS decisions_ai AFTER INSERT ON decisions BEGIN
+      INSERT INTO decisions_fts(rowid, description, context, participants, tags)
+      VALUES (new.id, new.description, new.context, new.participants, new.tags); END;
+    CREATE TRIGGER IF NOT EXISTS decisions_ad AFTER DELETE ON decisions BEGIN
+      INSERT INTO decisions_fts(decisions_fts, rowid, description, context, participants, tags)
+      VALUES ('delete', old.id, old.description, old.context, old.participants, old.tags); END;
+    CREATE TRIGGER IF NOT EXISTS decisions_au AFTER UPDATE ON decisions BEGIN
+      INSERT INTO decisions_fts(decisions_fts, rowid, description, context, participants, tags)
+      VALUES ('delete', old.id, old.description, old.context, old.participants, old.tags);
+      INSERT INTO decisions_fts(rowid, description, context, participants, tags)
+      VALUES (new.id, new.description, new.context, new.participants, new.tags); END;
+
+    CREATE TRIGGER IF NOT EXISTS tasks_ai AFTER INSERT ON tasks BEGIN
+      INSERT INTO tasks_fts(rowid, description, assignee, tags)
+      VALUES (new.id, new.description, new.assignee, new.tags); END;
+    CREATE TRIGGER IF NOT EXISTS tasks_ad AFTER DELETE ON tasks BEGIN
+      INSERT INTO tasks_fts(tasks_fts, rowid, description, assignee, tags)
+      VALUES ('delete', old.id, old.description, old.assignee, old.tags); END;
+    CREATE TRIGGER IF NOT EXISTS tasks_au AFTER UPDATE ON tasks BEGIN
+      INSERT INTO tasks_fts(tasks_fts, rowid, description, assignee, tags)
+      VALUES ('delete', old.id, old.description, old.assignee, old.tags);
+      INSERT INTO tasks_fts(rowid, description, assignee, tags)
+      VALUES (new.id, new.description, new.assignee, new.tags); END;
+
+    CREATE TRIGGER IF NOT EXISTS questions_ai AFTER INSERT ON questions BEGIN
+      INSERT INTO questions_fts(rowid, question, answer, asker, tags)
+      VALUES (new.id, new.question, new.answer, new.asker, new.tags); END;
+    CREATE TRIGGER IF NOT EXISTS questions_ad AFTER DELETE ON questions BEGIN
+      INSERT INTO questions_fts(questions_fts, rowid, question, answer, asker, tags)
+      VALUES ('delete', old.id, old.question, old.answer, old.asker, old.tags); END;
+    CREATE TRIGGER IF NOT EXISTS questions_au AFTER UPDATE ON questions BEGIN
+      INSERT INTO questions_fts(questions_fts, rowid, question, answer, asker, tags)
+      VALUES ('delete', old.id, old.question, old.answer, old.asker, old.tags);
+      INSERT INTO questions_fts(rowid, question, answer, asker, tags)
+      VALUES (new.id, new.question, new.answer, new.asker, new.tags); END;
+
+    CREATE TRIGGER IF NOT EXISTS events_ai AFTER INSERT ON events BEGIN
+      INSERT INTO events_fts(rowid, name, description, attendees, tags)
+      VALUES (new.id, new.name, new.description, new.attendees, new.tags); END;
+    CREATE TRIGGER IF NOT EXISTS events_ad AFTER DELETE ON events BEGIN
+      INSERT INTO events_fts(events_fts, rowid, name, description, attendees, tags)
+      VALUES ('delete', old.id, old.name, old.description, old.attendees, old.tags); END;
+    CREATE TRIGGER IF NOT EXISTS events_au AFTER UPDATE ON events BEGIN
+      INSERT INTO events_fts(events_fts, rowid, name, description, attendees, tags)
+      VALUES ('delete', old.id, old.name, old.description, old.attendees, old.tags);
+      INSERT INTO events_fts(rowid, name, description, attendees, tags)
+      VALUES (new.id, new.name, new.description, new.attendees, new.tags); END;
+  `;
+  driver.write(newTables);
+
+  // Add new columns to extraction_state (try-catch for "duplicate column" on CLI driver)
+  const newCols = ['total_decisions_extracted', 'total_tasks_extracted', 'total_questions_extracted', 'total_events_extracted'];
+  for (const col of newCols) {
+    try {
+      driver.write(`ALTER TABLE extraction_state ADD COLUMN ${col} INTEGER DEFAULT 0;`);
+    } catch (e) {
+      // Column already exists — ignore
+    }
+  }
+
+  // Set default profile if not already set
+  const profileMeta = driver.read("SELECT value FROM lizardbrain_meta WHERE key = 'profile_name'");
+  if (!profileMeta.length) {
+    driver.write("INSERT OR REPLACE INTO lizardbrain_meta (key, value, updated_at) VALUES ('profile_name', 'knowledge', datetime('now'));");
+    driver.write("INSERT OR REPLACE INTO lizardbrain_meta (key, value, updated_at) VALUES ('profile_entities', 'members,facts,topics', datetime('now'));");
+  }
+
+  // Set schema version
+  driver.write("INSERT OR REPLACE INTO lizardbrain_meta (key, value, updated_at) VALUES ('schema_version', '0.4', datetime('now'));");
+
+  return { migrated: true, message: 'Migrated to v0.4 schema' };
+}
+
+module.exports = { init, migrate, SCHEMA_SQL };

@@ -143,8 +143,138 @@ function insertTopic(driver, topic, messageDate) {
   return true;
 }
 
+function insertDecision(driver, decision, messageDate) {
+  const description = decision.description || '';
+  const prefix = esc(description.substring(0, 80).toLowerCase());
+  const exactMatch = driver.read(
+    `SELECT id FROM decisions WHERE LOWER(SUBSTR(description, 1, 80)) = '${prefix}'`
+  );
+  if (exactMatch.length > 0) return false;
+
+  const keywords = extractKeywords(description);
+  if (keywords.length >= 2) {
+    const ftsQuery = esc(keywords.slice(0, 2).join(' AND '));
+    const ftsMatch = driver.read(
+      `SELECT id FROM decisions WHERE id IN (SELECT rowid FROM decisions_fts WHERE decisions_fts MATCH '${ftsQuery}') LIMIT 1`
+    );
+    if (ftsMatch.length > 0) return false;
+  }
+
+  driver.write(`
+    INSERT INTO decisions (description, participants, context, status, tags, message_date)
+    VALUES (
+      '${esc(description)}',
+      '${esc(decision.participants || '')}',
+      '${esc(decision.context || '')}',
+      '${esc(decision.status || 'proposed')}',
+      '${esc(decision.tags || '')}',
+      '${esc(messageDate)}'
+    );
+  `);
+  return true;
+}
+
+function insertTask(driver, task, memberId, messageDate) {
+  const description = task.description || '';
+  const prefix = esc(description.substring(0, 80).toLowerCase());
+  const exactMatch = driver.read(
+    `SELECT id FROM tasks WHERE LOWER(SUBSTR(description, 1, 80)) = '${prefix}'`
+  );
+  if (exactMatch.length > 0) return false;
+
+  const keywords = extractKeywords(description);
+  if (keywords.length >= 2) {
+    const ftsQuery = esc(keywords.slice(0, 2).join(' AND '));
+    const ftsMatch = driver.read(
+      `SELECT id FROM tasks WHERE id IN (SELECT rowid FROM tasks_fts WHERE tasks_fts MATCH '${ftsQuery}') LIMIT 1`
+    );
+    if (ftsMatch.length > 0) return false;
+  }
+
+  driver.write(`
+    INSERT INTO tasks (description, assignee, deadline, status, source_member_id, tags, message_date)
+    VALUES (
+      '${esc(description)}',
+      '${esc(task.assignee || '')}',
+      ${task.deadline ? `'${esc(task.deadline)}'` : 'NULL'},
+      '${esc(task.status || 'open')}',
+      ${memberId || 'NULL'},
+      '${esc(task.tags || '')}',
+      '${esc(messageDate)}'
+    );
+  `);
+  return true;
+}
+
+function insertQuestion(driver, question, messageDate) {
+  const text = question.question || '';
+  const prefix = esc(text.substring(0, 80).toLowerCase());
+  const exactMatch = driver.read(
+    `SELECT id FROM questions WHERE LOWER(SUBSTR(question, 1, 80)) = '${prefix}'`
+  );
+  if (exactMatch.length > 0) return false;
+
+  const keywords = extractKeywords(text);
+  if (keywords.length >= 2) {
+    const ftsQuery = esc(keywords.slice(0, 2).join(' AND '));
+    const ftsMatch = driver.read(
+      `SELECT id FROM questions WHERE id IN (SELECT rowid FROM questions_fts WHERE questions_fts MATCH '${ftsQuery}') LIMIT 1`
+    );
+    if (ftsMatch.length > 0) return false;
+  }
+
+  driver.write(`
+    INSERT INTO questions (question, asker, answer, answered_by, status, tags, message_date)
+    VALUES (
+      '${esc(text)}',
+      '${esc(question.asker || '')}',
+      ${question.answer ? `'${esc(question.answer)}'` : 'NULL'},
+      '${esc(question.answered_by || '')}',
+      '${esc(question.status || 'open')}',
+      '${esc(question.tags || '')}',
+      '${esc(messageDate)}'
+    );
+  `);
+  return true;
+}
+
+function insertEvent(driver, event, messageDate) {
+  const name = event.name || '';
+
+  // Prefix dedup (fast path)
+  const prefix = esc(name.substring(0, 80).toLowerCase());
+  const exactMatch = driver.read(
+    `SELECT id FROM events WHERE LOWER(SUBSTR(name, 1, 80)) = '${prefix}'`
+  );
+  if (exactMatch.length > 0) return false;
+
+  const keywords = extractKeywords(name);
+  if (keywords.length >= 2) {
+    const ftsQuery = esc(keywords.slice(0, 2).join(' AND '));
+    const ftsMatch = driver.read(
+      `SELECT id FROM events WHERE id IN (SELECT rowid FROM events_fts WHERE events_fts MATCH '${ftsQuery}') LIMIT 1`
+    );
+    if (ftsMatch.length > 0) return false;
+  }
+
+  driver.write(`
+    INSERT INTO events (name, description, event_date, location, attendees, tags, message_date)
+    VALUES (
+      '${esc(name)}',
+      '${esc(event.description || '')}',
+      ${event.event_date ? `'${esc(event.event_date)}'` : 'NULL'},
+      '${esc(event.location || '')}',
+      '${esc(event.attendees || '')}',
+      '${esc(event.tags || '')}',
+      '${esc(messageDate)}'
+    );
+  `);
+  return true;
+}
+
 function processExtraction(driver, extracted, messageDate) {
   let totalFacts = 0, totalTopics = 0, totalMembers = 0;
+  let totalDecisions = 0, totalTasks = 0, totalQuestions = 0, totalEvents = 0;
   const memberIdMap = {};
 
   if (extracted.members && Array.isArray(extracted.members)) {
@@ -171,12 +301,52 @@ function processExtraction(driver, extracted, messageDate) {
   if (extracted.topics && Array.isArray(extracted.topics)) {
     for (const topic of extracted.topics) {
       if (!topic.name) continue;
-      insertTopic(driver, topic, messageDate);
-      totalTopics++;
+      if (insertTopic(driver, topic, messageDate)) {
+        totalTopics++;
+      }
     }
   }
 
-  return { totalFacts, totalTopics, totalMembers };
+  if (extracted.decisions && Array.isArray(extracted.decisions)) {
+    for (const decision of extracted.decisions) {
+      if (!decision.description) continue;
+      if (insertDecision(driver, decision, messageDate)) {
+        totalDecisions++;
+      }
+    }
+  }
+
+  if (extracted.tasks && Array.isArray(extracted.tasks)) {
+    for (const task of extracted.tasks) {
+      if (!task.description) continue;
+      const memberId = task.source_member
+        ? memberIdMap[task.source_member.toLowerCase()] || null
+        : null;
+      if (insertTask(driver, task, memberId, messageDate)) {
+        totalTasks++;
+      }
+    }
+  }
+
+  if (extracted.questions && Array.isArray(extracted.questions)) {
+    for (const question of extracted.questions) {
+      if (!question.question) continue;
+      if (insertQuestion(driver, question, messageDate)) {
+        totalQuestions++;
+      }
+    }
+  }
+
+  if (extracted.events && Array.isArray(extracted.events)) {
+    for (const event of extracted.events) {
+      if (!event.name) continue;
+      if (insertEvent(driver, event, messageDate)) {
+        totalEvents++;
+      }
+    }
+  }
+
+  return { totalFacts, totalTopics, totalMembers, totalDecisions, totalTasks, totalQuestions, totalEvents };
 }
 
 function getState(driver) {
@@ -184,13 +354,18 @@ function getState(driver) {
   return rows[0] || null;
 }
 
-function updateState(driver, { lastProcessedId, messagesProcessed, factsExtracted, topicsExtracted }) {
+function updateState(driver, { lastProcessedId, messagesProcessed, factsExtracted, topicsExtracted,
+  decisionsExtracted = 0, tasksExtracted = 0, questionsExtracted = 0, eventsExtracted = 0 }) {
   driver.write(`
     UPDATE extraction_state SET
       last_processed_id = '${esc(String(lastProcessedId))}',
       total_messages_processed = total_messages_processed + ${messagesProcessed},
       total_facts_extracted = total_facts_extracted + ${factsExtracted},
       total_topics_extracted = total_topics_extracted + ${topicsExtracted},
+      total_decisions_extracted = total_decisions_extracted + ${decisionsExtracted},
+      total_tasks_extracted = total_tasks_extracted + ${tasksExtracted},
+      total_questions_extracted = total_questions_extracted + ${questionsExtracted},
+      total_events_extracted = total_events_extracted + ${eventsExtracted},
       total_members_seen = (SELECT COUNT(*) FROM members),
       last_run_at = datetime('now')
     WHERE id = 1;
@@ -205,15 +380,28 @@ function getStats(driver) {
   const members = driver.read('SELECT COUNT(*) as c FROM members');
   const facts = driver.read('SELECT COUNT(*) as c FROM facts');
   const topics = driver.read('SELECT COUNT(*) as c FROM topics');
+  const decisions = driver.read('SELECT COUNT(*) as c FROM decisions');
+  const tasks = driver.read('SELECT COUNT(*) as c FROM tasks');
+  const questions = driver.read('SELECT COUNT(*) as c FROM questions');
+  const events = driver.read('SELECT COUNT(*) as c FROM events');
   const state = getState(driver);
+
+  // Get profile from meta
+  const profileMeta = driver.read("SELECT value FROM lizardbrain_meta WHERE key = 'profile_name'");
+  const profile = profileMeta[0]?.value || 'knowledge';
 
   return {
     members: parseInt(members[0]?.c) || 0,
     facts: parseInt(facts[0]?.c) || 0,
     topics: parseInt(topics[0]?.c) || 0,
+    decisions: parseInt(decisions[0]?.c) || 0,
+    tasks: parseInt(tasks[0]?.c) || 0,
+    questions: parseInt(questions[0]?.c) || 0,
+    events: parseInt(events[0]?.c) || 0,
     messagesProcessed: parseInt(state?.total_messages_processed) || 0,
     lastProcessedId: state?.last_processed_id || '0',
     lastRun: state?.last_run_at || 'never',
+    profile,
     driver: driver.backend,
     vectors: driver.capabilities.vectors,
   };
@@ -247,16 +435,41 @@ function whoKnows(driver, keyword) {
   );
 }
 
-function generateRoster(driver, { maxExpertise = 5, maxProjects = 3 } = {}) {
+function searchDecisions(driver, query, limit = 10) {
+  return driver.read(
+    `SELECT * FROM decisions WHERE id IN (SELECT rowid FROM decisions_fts WHERE decisions_fts MATCH '${esc(query)}') ORDER BY created_at DESC LIMIT ${limit}`
+  );
+}
+
+function searchTasks(driver, query, limit = 10) {
+  return driver.read(
+    `SELECT t.*, m.display_name as source FROM tasks t LEFT JOIN members m ON t.source_member_id = m.id WHERE t.id IN (SELECT rowid FROM tasks_fts WHERE tasks_fts MATCH '${esc(query)}') ORDER BY t.created_at DESC LIMIT ${limit}`
+  );
+}
+
+function searchQuestions(driver, query, limit = 10) {
+  return driver.read(
+    `SELECT * FROM questions WHERE id IN (SELECT rowid FROM questions_fts WHERE questions_fts MATCH '${esc(query)}') ORDER BY created_at DESC LIMIT ${limit}`
+  );
+}
+
+function searchEvents(driver, query, limit = 10) {
+  return driver.read(
+    `SELECT * FROM events WHERE id IN (SELECT rowid FROM events_fts WHERE events_fts MATCH '${esc(query)}') ORDER BY created_at DESC LIMIT ${limit}`
+  );
+}
+
+function generateRoster(driver, { maxExpertise = 5, maxProjects = 3, title = 'Members', memberLabels = null } = {}) {
   const members = driver.read('SELECT display_name, expertise, projects FROM members ORDER BY display_name');
-  const lines = ['# Community Members', ''];
+  const projLabel = memberLabels?.rosterProjects || 'builds';
+  const lines = [`# ${title}`, ''];
   for (const m of members) {
     const name = m.display_name || '';
     const exp = (m.expertise || '').split(',').slice(0, maxExpertise).map(s => s.trim()).filter(Boolean).join(', ');
     const proj = (m.projects || '').split(',').slice(0, maxProjects).map(s => s.trim()).filter(Boolean).join(', ');
     let line = `- **${name}**`;
     if (exp) line += ` — ${exp}`;
-    if (proj) line += ` | builds: ${proj}`;
+    if (proj) line += ` | ${projLabel}: ${proj}`;
     lines.push(line);
   }
   return { content: lines.join('\n') + '\n', count: members.length };
@@ -271,6 +484,10 @@ module.exports = {
   searchFacts,
   searchTopics,
   searchMembers,
+  searchDecisions,
+  searchTasks,
+  searchQuestions,
+  searchEvents,
   whoKnows,
   generateRoster,
 };

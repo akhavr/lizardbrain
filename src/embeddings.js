@@ -171,6 +171,34 @@ function createVecTables(driver, dimensions) {
       embedding FLOAT[${dimensions}]
     );
   `);
+
+  driver.write(`
+    CREATE VIRTUAL TABLE IF NOT EXISTS decisions_vec USING vec0(
+      decision_id INTEGER PRIMARY KEY,
+      embedding FLOAT[${dimensions}]
+    );
+  `);
+
+  driver.write(`
+    CREATE VIRTUAL TABLE IF NOT EXISTS tasks_vec USING vec0(
+      task_id INTEGER PRIMARY KEY,
+      embedding FLOAT[${dimensions}]
+    );
+  `);
+
+  driver.write(`
+    CREATE VIRTUAL TABLE IF NOT EXISTS questions_vec USING vec0(
+      question_id INTEGER PRIMARY KEY,
+      embedding FLOAT[${dimensions}]
+    );
+  `);
+
+  driver.write(`
+    CREATE VIRTUAL TABLE IF NOT EXISTS events_vec USING vec0(
+      event_id INTEGER PRIMARY KEY,
+      embedding FLOAT[${dimensions}]
+    );
+  `);
 }
 
 /**
@@ -188,11 +216,19 @@ function getEmbeddingStats(driver) {
   const factsTotal = count('facts');
   const topicsTotal = count('topics');
   const membersTotal = count('members');
+  const decisionsTotal = count('decisions');
+  const tasksTotal = count('tasks');
+  const questionsTotal = count('questions');
+  const eventsTotal = count('events');
 
   // Vec tables may not exist yet; driver.read returns [] on missing table
   const factsEmbedded = count('facts_vec');
   const topicsEmbedded = count('topics_vec');
   const membersEmbedded = count('members_vec');
+  const decisionsEmbedded = count('decisions_vec');
+  const tasksEmbedded = count('tasks_vec');
+  const questionsEmbedded = count('questions_vec');
+  const eventsEmbedded = count('events_vec');
 
   return {
     model,
@@ -200,6 +236,10 @@ function getEmbeddingStats(driver) {
     facts: { total: factsTotal, embedded: factsEmbedded },
     topics: { total: topicsTotal, embedded: topicsEmbedded },
     members: { total: membersTotal, embedded: membersEmbedded },
+    decisions: { total: decisionsTotal, embedded: decisionsEmbedded },
+    tasks: { total: tasksTotal, embedded: tasksEmbedded },
+    questions: { total: questionsTotal, embedded: questionsEmbedded },
+    events: { total: eventsTotal, embedded: eventsEmbedded },
   };
 }
 
@@ -255,7 +295,7 @@ async function backfill(driver, config, options = {}) {
 
   // Rebuild: drop existing vec tables and clear meta
   if (options.rebuild) {
-    for (const table of ['facts_vec', 'topics_vec', 'members_vec']) {
+    for (const table of ['facts_vec', 'topics_vec', 'members_vec', 'decisions_vec', 'tasks_vec', 'questions_vec', 'events_vec']) {
       driver.write(`DROP TABLE IF EXISTS ${table}`);
     }
     for (const key of ['embedding_model', 'embedding_dimensions', 'embedding_base_url']) {
@@ -354,6 +394,134 @@ async function backfill(driver, config, options = {}) {
         driver.transaction(() => {
           const insertStmt = driver._db.prepare(
             'INSERT OR REPLACE INTO members_vec (member_id, embedding) VALUES (?, ?)'
+          );
+          for (let i = 0; i < batch.length; i++) {
+            const row = rows[offset + i];
+            insertStmt.run(row.id, new Float32Array(result.embeddings[i]));
+          }
+        });
+        offset += batch.length;
+        totalEmbedded += batch.length;
+      }
+    }
+  }
+
+  // --- Embed decisions ---
+  {
+    const rows = driver.read(
+      `SELECT d.id, d.description, d.context FROM decisions d
+       LEFT JOIN decisions_vec dv ON d.id = dv.decision_id
+       WHERE dv.decision_id IS NULL`
+    );
+
+    if (rows.length > 0) {
+      const texts = rows.map(r =>
+        `${r.description || ''}. Context: ${r.context || ''}`
+      );
+      const batches = splitIntoBatches(texts, batchTokenLimit);
+      let offset = 0;
+
+      for (const batch of batches) {
+        const result = await embedWithRetry(batch, config);
+        driver.transaction(() => {
+          const insertStmt = driver._db.prepare(
+            'INSERT OR REPLACE INTO decisions_vec (decision_id, embedding) VALUES (?, ?)'
+          );
+          for (let i = 0; i < batch.length; i++) {
+            const row = rows[offset + i];
+            insertStmt.run(row.id, new Float32Array(result.embeddings[i]));
+          }
+        });
+        offset += batch.length;
+        totalEmbedded += batch.length;
+      }
+    }
+  }
+
+  // --- Embed tasks ---
+  {
+    const rows = driver.read(
+      `SELECT t.id, t.description, t.assignee FROM tasks t
+       LEFT JOIN tasks_vec tv ON t.id = tv.task_id
+       WHERE tv.task_id IS NULL`
+    );
+
+    if (rows.length > 0) {
+      const texts = rows.map(r =>
+        `${r.description || ''} -- assigned to ${r.assignee || 'unassigned'}`
+      );
+      const batches = splitIntoBatches(texts, batchTokenLimit);
+      let offset = 0;
+
+      for (const batch of batches) {
+        const result = await embedWithRetry(batch, config);
+        driver.transaction(() => {
+          const insertStmt = driver._db.prepare(
+            'INSERT OR REPLACE INTO tasks_vec (task_id, embedding) VALUES (?, ?)'
+          );
+          for (let i = 0; i < batch.length; i++) {
+            const row = rows[offset + i];
+            insertStmt.run(row.id, new Float32Array(result.embeddings[i]));
+          }
+        });
+        offset += batch.length;
+        totalEmbedded += batch.length;
+      }
+    }
+  }
+
+  // --- Embed questions ---
+  {
+    const rows = driver.read(
+      `SELECT q.id, q.question, q.answer FROM questions q
+       LEFT JOIN questions_vec qv ON q.id = qv.question_id
+       WHERE qv.question_id IS NULL`
+    );
+
+    if (rows.length > 0) {
+      const texts = rows.map(r =>
+        `${r.question || ''}${r.answer ? ' -> ' + r.answer : ''}`
+      );
+      const batches = splitIntoBatches(texts, batchTokenLimit);
+      let offset = 0;
+
+      for (const batch of batches) {
+        const result = await embedWithRetry(batch, config);
+        driver.transaction(() => {
+          const insertStmt = driver._db.prepare(
+            'INSERT OR REPLACE INTO questions_vec (question_id, embedding) VALUES (?, ?)'
+          );
+          for (let i = 0; i < batch.length; i++) {
+            const row = rows[offset + i];
+            insertStmt.run(row.id, new Float32Array(result.embeddings[i]));
+          }
+        });
+        offset += batch.length;
+        totalEmbedded += batch.length;
+      }
+    }
+  }
+
+  // --- Embed events ---
+  {
+    const rows = driver.read(
+      `SELECT e.id, e.name, e.description FROM events e
+       LEFT JOIN events_vec ev ON e.id = ev.event_id
+       WHERE ev.event_id IS NULL`
+    );
+
+    if (rows.length > 0) {
+      const texts = rows.map(r =>
+        `${r.name || ''}: ${r.description || ''}`
+      );
+      const batches = splitIntoBatches(texts, batchTokenLimit);
+      let offset = 0;
+
+      for (const batch of batches) {
+        const result = await embedWithRetry(batch, config);
+        driver.transaction(() => {
+          const insertStmt = driver._db.prepare(
+            'INSERT OR REPLACE INTO events_vec (event_id, embedding) VALUES (?, ?)'
           );
           for (let i = 0; i < batch.length; i++) {
             const row = rows[offset + i];

@@ -1,0 +1,23 @@
+{
+  "memoryDbPath": "./lizardbrain.db",
+  "profile": "project",
+  "batchSize": 40,
+  "minMessages": 5,
+
+  "llm": {
+    "baseUrl": "https://api.openai.com/v1",
+    "model": "gpt-5-nano"
+  },
+
+  "source": {
+    "type": "sqlite",
+    "path": "./chat.db",
+    "table": "messages",
+    "columns": {
+      "id": "id",
+      "content": "content",
+      "sender": "sender_name",
+      "timestamp": "created_at"
+    }
+  }
+}

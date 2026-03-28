@@ -115,6 +115,101 @@ function ftsSearch(driver, query, limit) {
     });
   }
 
+  // Search decisions_fts
+  const decisions = driver.read(
+    `SELECT id, description, context, participants, status, tags
+     FROM decisions
+     WHERE id IN (SELECT rowid FROM decisions_fts WHERE decisions_fts MATCH '${escapedQuery}')
+     ORDER BY created_at DESC
+     LIMIT ${limit}`
+  );
+  for (const d of decisions) {
+    results.push({
+      key: `decision:${d.id}`,
+      data: {
+        source: 'decision',
+        id: d.id,
+        text: d.description,
+        context: d.context || '',
+        participants: d.participants || '',
+        status: d.status || 'proposed',
+        tags: d.tags || '',
+      },
+    });
+  }
+
+  // Search tasks_fts
+  const tasks = driver.read(
+    `SELECT t.id, t.description, t.assignee, t.status, t.tags, m.display_name as member
+     FROM tasks t
+     LEFT JOIN members m ON t.source_member_id = m.id
+     WHERE t.id IN (SELECT rowid FROM tasks_fts WHERE tasks_fts MATCH '${escapedQuery}')
+     ORDER BY t.created_at DESC
+     LIMIT ${limit}`
+  );
+  for (const t of tasks) {
+    results.push({
+      key: `task:${t.id}`,
+      data: {
+        source: 'task',
+        id: t.id,
+        text: t.description,
+        assignee: t.assignee || '',
+        member: t.member || null,
+        status: t.status || 'open',
+        tags: t.tags || '',
+      },
+    });
+  }
+
+  // Search questions_fts
+  const questions = driver.read(
+    `SELECT id, question, asker, answer, answered_by, status, tags
+     FROM questions
+     WHERE id IN (SELECT rowid FROM questions_fts WHERE questions_fts MATCH '${escapedQuery}')
+     ORDER BY created_at DESC
+     LIMIT ${limit}`
+  );
+  for (const q of questions) {
+    results.push({
+      key: `question:${q.id}`,
+      data: {
+        source: 'question',
+        id: q.id,
+        text: q.question,
+        answer: q.answer || '',
+        asker: q.asker || '',
+        answered_by: q.answered_by || '',
+        status: q.status || 'open',
+        tags: q.tags || '',
+      },
+    });
+  }
+
+  // Search events_fts
+  const events = driver.read(
+    `SELECT id, name, description, event_date, location, attendees, tags
+     FROM events
+     WHERE id IN (SELECT rowid FROM events_fts WHERE events_fts MATCH '${escapedQuery}')
+     ORDER BY created_at DESC
+     LIMIT ${limit}`
+  );
+  for (const e of events) {
+    results.push({
+      key: `event:${e.id}`,
+      data: {
+        source: 'event',
+        id: e.id,
+        text: e.name,
+        description: e.description || '',
+        event_date: e.event_date || '',
+        location: e.location || '',
+        attendees: e.attendees || '',
+        tags: e.tags || '',
+      },
+    });
+  }
+
   return results;
 }
 
@@ -216,6 +311,125 @@ function vecSearch(driver, queryEmbedding, limit) {
     }
   } catch (_) {
     // members_vec table may not exist yet
+  }
+
+  // Search decisions_vec
+  try {
+    const decisionRows = db.prepare(
+      `SELECT decision_id, distance FROM decisions_vec WHERE embedding MATCH ? ORDER BY distance LIMIT ?`
+    ).all(embeddingBuffer, limit);
+
+    for (const row of decisionRows) {
+      const decision = db.prepare(
+        `SELECT id, description, context, participants, status, tags FROM decisions WHERE id = ?`
+      ).get(row.decision_id);
+      if (decision) {
+        results.push({
+          key: `decision:${decision.id}`,
+          data: {
+            source: 'decision',
+            id: decision.id,
+            text: decision.description,
+            context: decision.context || '',
+            participants: decision.participants || '',
+            status: decision.status || 'proposed',
+            tags: decision.tags || '',
+          },
+        });
+      }
+    }
+  } catch (_) {
+    // decisions_vec table may not exist yet
+  }
+
+  // Search tasks_vec
+  try {
+    const taskRows = db.prepare(
+      `SELECT task_id, distance FROM tasks_vec WHERE embedding MATCH ? ORDER BY distance LIMIT ?`
+    ).all(embeddingBuffer, limit);
+
+    for (const row of taskRows) {
+      const task = db.prepare(
+        `SELECT t.id, t.description, t.assignee, t.status, t.tags, m.display_name as member
+         FROM tasks t LEFT JOIN members m ON t.source_member_id = m.id WHERE t.id = ?`
+      ).get(row.task_id);
+      if (task) {
+        results.push({
+          key: `task:${task.id}`,
+          data: {
+            source: 'task',
+            id: task.id,
+            text: task.description,
+            assignee: task.assignee || '',
+            member: task.member || null,
+            status: task.status || 'open',
+            tags: task.tags || '',
+          },
+        });
+      }
+    }
+  } catch (_) {
+    // tasks_vec table may not exist yet
+  }
+
+  // Search questions_vec
+  try {
+    const questionRows = db.prepare(
+      `SELECT question_id, distance FROM questions_vec WHERE embedding MATCH ? ORDER BY distance LIMIT ?`
+    ).all(embeddingBuffer, limit);
+
+    for (const row of questionRows) {
+      const question = db.prepare(
+        `SELECT id, question, asker, answer, answered_by, status, tags FROM questions WHERE id = ?`
+      ).get(row.question_id);
+      if (question) {
+        results.push({
+          key: `question:${question.id}`,
+          data: {
+            source: 'question',
+            id: question.id,
+            text: question.question,
+            answer: question.answer || '',
+            asker: question.asker || '',
+            answered_by: question.answered_by || '',
+            status: question.status || 'open',
+            tags: question.tags || '',
+          },
+        });
+      }
+    }
+  } catch (_) {
+    // questions_vec table may not exist yet
+  }
+
+  // Search events_vec
+  try {
+    const eventRows = db.prepare(
+      `SELECT event_id, distance FROM events_vec WHERE embedding MATCH ? ORDER BY distance LIMIT ?`
+    ).all(embeddingBuffer, limit);
+
+    for (const row of eventRows) {
+      const event = db.prepare(
+        `SELECT id, name, description, event_date, location, attendees, tags FROM events WHERE id = ?`
+      ).get(row.event_id);
+      if (event) {
+        results.push({
+          key: `event:${event.id}`,
+          data: {
+            source: 'event',
+            id: event.id,
+            text: event.name,
+            description: event.description || '',
+            event_date: event.event_date || '',
+            location: event.location || '',
+            attendees: event.attendees || '',
+            tags: event.tags || '',
+          },
+        });
+      }
+    }
+  } catch (_) {
+    // events_vec table may not exist yet
   }
 
   return results;

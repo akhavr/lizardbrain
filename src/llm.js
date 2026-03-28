@@ -3,6 +3,8 @@
  * Works with: OpenAI, Gemini, Groq, Ollama, LM Studio, vLLM, any OpenAI-compatible endpoint.
  */
 
+const { ENTITY_DEFS } = require('./profiles');
+
 const EXTRACTION_PROMPT = `Analyze these chat messages and extract structured knowledge.
 
 MESSAGES:
@@ -54,6 +56,57 @@ Fact rules:
 
 If no meaningful content found, return empty arrays`;
 
+function buildPrompt(formattedMessages, profileConfig) {
+  const { entities, factCategories, memberLabels } = profileConfig;
+
+  // Build JSON schema with only enabled entities
+  const schemaFragments = [];
+  for (const entity of entities) {
+    const def = ENTITY_DEFS[entity];
+    if (!def) continue;
+    if (entity === 'members') {
+      schemaFragments.push(def.promptFragment(memberLabels));
+    } else if (entity === 'facts') {
+      schemaFragments.push(def.promptFragment(memberLabels, factCategories));
+    } else {
+      schemaFragments.push(def.promptFragment());
+    }
+  }
+
+  // Build rules with only enabled entities
+  const rulesFragments = [];
+  for (const entity of entities) {
+    const def = ENTITY_DEFS[entity];
+    if (!def) continue;
+    if (entity === 'members') {
+      rulesFragments.push(def.rules(memberLabels));
+    } else if (entity === 'facts') {
+      rulesFragments.push(def.rules(memberLabels, factCategories));
+    } else {
+      rulesFragments.push(def.rules());
+    }
+  }
+
+  return `Analyze these chat messages and extract structured knowledge.
+
+MESSAGES:
+${formattedMessages}
+
+Extract and return JSON with exactly this structure:
+{
+${schemaFragments.join(',\n')}
+}
+
+Rules:
+- Only extract information explicitly stated in messages, don't infer
+- Skip greetings, small talk, and messages with no informational content
+- Extract durable knowledge useful months later, not ephemeral news
+
+${rulesFragments.join('\n\n')}
+
+If no meaningful content found, return empty arrays`;
+}
+
 function formatMessages(messages) {
   return messages.map(m => {
     const sender = m.sender || m.senderName || 'unknown';
@@ -68,15 +121,22 @@ async function extract(messages, config) {
     baseUrl,
     model,
     promptTemplate,
+    profileConfig,
   } = config;
 
   if (!apiKey) throw new Error('LLM API key not configured');
   if (!baseUrl) throw new Error('LLM base URL not configured');
   if (!model) throw new Error('LLM model not configured');
 
-  const template = promptTemplate || EXTRACTION_PROMPT;
   const formatted = formatMessages(messages);
-  const prompt = template.replace('{messages}', formatted);
+  let prompt;
+  if (promptTemplate) {
+    prompt = promptTemplate.replace('{messages}', formatted);
+  } else if (profileConfig) {
+    prompt = buildPrompt(formatted, profileConfig);
+  } else {
+    prompt = EXTRACTION_PROMPT.replace('{messages}', formatted);
+  }
 
   const url = baseUrl.replace(/\/+$/, '') + '/chat/completions';
 
@@ -126,4 +186,4 @@ async function extract(messages, config) {
   return JSON.parse(content);
 }
 
-module.exports = { extract, EXTRACTION_PROMPT };
+module.exports = { extract, buildPrompt, EXTRACTION_PROMPT };

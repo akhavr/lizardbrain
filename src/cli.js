@@ -18,12 +18,18 @@ const path = require('path');
 const lizardbrain = require('./index');
 const config = require('./config');
 const { createDriver, dbExists } = require('./driver');
+const { PROFILES, PROFILE_NAMES, ALL_ENTITIES, getProfile, buildCustomProfile } = require('./profiles');
+const { migrate } = require('./schema');
 
 const args = process.argv.slice(2);
 const command = args[0];
 
 function flag(name) { return args.includes(`--${name}`); }
 function arg(index) { return args[index]; }
+function flagValue(name) {
+  const idx = args.indexOf(`--${name}`);
+  return idx >= 0 ? args[idx + 1] : null;
+}
 
 async function main() {
   const configPath = flag('config')
@@ -34,7 +40,15 @@ async function main() {
 
   switch (command) {
     case 'init': {
-      const result = lizardbrain.init(cfg.memoryDbPath, { force: flag('force') });
+      let profile = flagValue('profile') || cfg.profile;
+
+      // Interactive profile selection if no profile specified and stdin is TTY
+      if (!profile && process.stdin.isTTY) {
+        profile = await promptProfile();
+      }
+      profile = profile || 'knowledge';
+
+      const result = lizardbrain.init(cfg.memoryDbPath, { force: flag('force'), profile });
       console.log(result.message);
       break;
     }
@@ -46,6 +60,7 @@ async function main() {
       }
 
       const driver = createDriver(cfg.memoryDbPath);
+      migrate(driver);
       const adapter = createAdapter(cfg.source);
       const rosterOutput = flag('roster') ? args[args.indexOf('--roster') + 1] : (cfg.rosterPath || null);
       const result = await lizardbrain.extract(adapter, driver, cfg, {
@@ -72,11 +87,17 @@ async function main() {
       }
 
       const driver = createDriver(cfg.memoryDbPath);
+      migrate(driver);
       const stats = lizardbrain.query.getStats(driver);
       console.log('\n=== lizardbrain stats ===');
+      console.log(`Profile:  ${stats.profile}`);
       console.log(`Members:  ${stats.members}`);
       console.log(`Facts:    ${stats.facts}`);
       console.log(`Topics:   ${stats.topics}`);
+      if (stats.decisions > 0) console.log(`Decisions: ${stats.decisions}`);
+      if (stats.tasks > 0) console.log(`Tasks:    ${stats.tasks}`);
+      if (stats.questions > 0) console.log(`Questions: ${stats.questions}`);
+      if (stats.events > 0) console.log(`Events:   ${stats.events}`);
       console.log(`\nDriver:   ${stats.driver}${stats.vectors ? ' (vectors enabled)' : ''}`);
       console.log(`Search:   ${stats.vectors ? 'hybrid (FTS5 + kNN + RRF)' : 'FTS5'}`);
 
@@ -90,6 +111,10 @@ async function main() {
           console.log(`  facts:      ${estats.facts.embedded}/${estats.facts.total}`);
           console.log(`  topics:     ${estats.topics.embedded}/${estats.topics.total}`);
           console.log(`  members:    ${estats.members.embedded}/${estats.members.total}`);
+          if (estats.decisions.total > 0) console.log(`  decisions:  ${estats.decisions.embedded}/${estats.decisions.total}`);
+          if (estats.tasks.total > 0) console.log(`  tasks:      ${estats.tasks.embedded}/${estats.tasks.total}`);
+          if (estats.questions.total > 0) console.log(`  questions:  ${estats.questions.embedded}/${estats.questions.total}`);
+          if (estats.events.total > 0) console.log(`  events:     ${estats.events.embedded}/${estats.events.total}`);
         }
       }
 
@@ -108,6 +133,7 @@ async function main() {
         process.exit(1);
       }
       const driver = createDriver(cfg.memoryDbPath);
+      migrate(driver);
       const { search: hybridSearch } = require('./search');
       const embCfg = (cfg.embedding?.enabled && cfg.embedding?.apiKey) ? cfg.embedding : null;
       const result = await hybridSearch(driver, queryText, {
@@ -156,7 +182,12 @@ async function main() {
         console.log(`Dimensions: ${estats.dimensions}`);
         console.log(`Facts:      ${estats.facts.embedded}/${estats.facts.total}`);
         console.log(`Topics:     ${estats.topics.embedded}/${estats.topics.total}`);
-        console.log(`Members:    ${estats.members.embedded}/${estats.members.total}\n`);
+        console.log(`Members:    ${estats.members.embedded}/${estats.members.total}`);
+        if (estats.decisions.total > 0) console.log(`Decisions:  ${estats.decisions.embedded}/${estats.decisions.total}`);
+        if (estats.tasks.total > 0) console.log(`Tasks:      ${estats.tasks.embedded}/${estats.tasks.total}`);
+        if (estats.questions.total > 0) console.log(`Questions:  ${estats.questions.embedded}/${estats.questions.total}`);
+        if (estats.events.total > 0) console.log(`Events:     ${estats.events.embedded}/${estats.events.total}`);
+        console.log('');
       } else {
         const result = await embeddings.backfill(driver, cfg.embedding, { rebuild: flag('rebuild') });
         if (!result.ok) {
@@ -201,7 +232,12 @@ async function main() {
       }
 
       const driver = createDriver(cfg.memoryDbPath);
-      const roster = lizardbrain.query.generateRoster(driver);
+      migrate(driver);
+      // Read profile from DB meta to use correct roster labels
+      const profileMeta = driver.read("SELECT value FROM lizardbrain_meta WHERE key = 'profile_name'");
+      const rosterProfile = profileMeta[0]?.value || 'knowledge';
+      const rosterLabels = getProfile(rosterProfile).memberLabels;
+      const roster = lizardbrain.query.generateRoster(driver, { memberLabels: rosterLabels });
       driver.close();
 
       const outputIdx = args.indexOf('--output');
@@ -217,10 +253,10 @@ async function main() {
     }
 
     default:
-      console.log(`lizardbrain — Lightweight structured memory for community chats
+      console.log(`lizardbrain — Persistent memory for group chats
 
 Commands:
-  init [--force]                    Create memory database
+  init [--force] [--profile <name>] Create memory database
   extract [--dry-run] [--reprocess] Run extraction pipeline
   embed [--stats] [--rebuild]       Manage vector embeddings
   stats                             Show database statistics
@@ -228,22 +264,53 @@ Commands:
   who <keyword>                     Find members by expertise
   roster [--output path]            Generate member roster
 
+Profiles:
+  knowledge  Community, interest group (members, facts, topics)
+  team       Team, workplace (+ decisions, tasks)
+  project    Client, project group (+ decisions, tasks, questions)
+  full       Everything (all entity types)
+  custom     Pick your own entity types
+
 Options:
   --config <path>                   Path to lizardbrain.json config file
+  --profile <name>                  Set extraction profile (knowledge, team, project, full)
   --roster <path>                   Generate roster after extraction
   --no-enrich                       Skip URL metadata enrichment
   --no-embed                        Skip auto-embedding after extraction
 
 Environment variables:
-  LIZARDBRAIN_DB_PATH                   Path to memory database
-  LIZARDBRAIN_LLM_BASE_URL             LLM API base URL
-  LIZARDBRAIN_LLM_API_KEY              LLM API key
-  LIZARDBRAIN_LLM_MODEL                LLM model name
-  LIZARDBRAIN_EMBEDDING_BASE_URL       Embedding API base URL
-  LIZARDBRAIN_EMBEDDING_API_KEY        Embedding API key
-  LIZARDBRAIN_EMBEDDING_MODEL          Embedding model name
+  LIZARDBRAIN_DB_PATH               Path to memory database
+  LIZARDBRAIN_PROFILE               Extraction profile
+  LIZARDBRAIN_LLM_BASE_URL          LLM API base URL
+  LIZARDBRAIN_LLM_API_KEY           LLM API key
+  LIZARDBRAIN_LLM_MODEL             LLM model name
+  LIZARDBRAIN_EMBEDDING_BASE_URL    Embedding API base URL
+  LIZARDBRAIN_EMBEDDING_API_KEY     Embedding API key
+  LIZARDBRAIN_EMBEDDING_MODEL       Embedding model name
 `);
   }
+}
+
+function promptProfile() {
+  const readline = require('readline');
+  const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
+
+  return new Promise((resolve) => {
+    console.log('\nWhat kind of group is this?\n');
+    console.log('  1) knowledge  — community, interest group (members, facts, topics)');
+    console.log('  2) team       — team, workplace (+ decisions, tasks)');
+    console.log('  3) project    — client, project group (+ decisions, tasks, questions)');
+    console.log('  4) full       — everything (all entity types)');
+    console.log('');
+
+    rl.question('> ', (answer) => {
+      rl.close();
+      const choice = answer.trim();
+      const map = { '1': 'knowledge', '2': 'team', '3': 'project', '4': 'full',
+        'knowledge': 'knowledge', 'team': 'team', 'project': 'project', 'full': 'full' };
+      resolve(map[choice] || 'knowledge');
+    });
+  });
 }
 
 function createAdapter(sourceConfig) {

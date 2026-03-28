@@ -28,6 +28,9 @@ const DEFAULTS = {
     dimensions: null,
     batchTokenLimit: 8000,
   },
+  profile: null,
+  entities: null,
+  factCategories: null,
 };
 
 function loadEnv(dir) {
@@ -73,6 +76,9 @@ function load(configPath) {
     batchSize: fileConfig.batchSize || parseInt(process.env.LIZARDBRAIN_BATCH_SIZE) || DEFAULTS.batchSize,
     minMessages: fileConfig.minMessages || parseInt(process.env.LIZARDBRAIN_MIN_MESSAGES) || DEFAULTS.minMessages,
     rosterPath: fileConfig.rosterPath || process.env.LIZARDBRAIN_ROSTER_PATH || DEFAULTS.rosterPath,
+    profile: fileConfig.profile || process.env.LIZARDBRAIN_PROFILE || DEFAULTS.profile,
+    entities: fileConfig.entities || DEFAULTS.entities,
+    factCategories: fileConfig.factCategories || DEFAULTS.factCategories,
     llm: {
       baseUrl: fileConfig.llm?.baseUrl || process.env.LIZARDBRAIN_LLM_BASE_URL || process.env.LLM_BASE_URL || DEFAULTS.llm.baseUrl,
       apiKey: fileConfig.llm?.apiKey || process.env.LIZARDBRAIN_LLM_API_KEY || process.env.LLM_API_KEY || DEFAULTS.llm.apiKey,

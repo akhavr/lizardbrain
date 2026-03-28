@@ -1,6 +1,6 @@
-# Lizardbrain (formerly lizardbrain)
+# Lizardbrain
 
-Lightweight structured memory extraction for community chats. Reads messages from any source, extracts knowledge (members, facts, topics) via any LLM, stores in SQLite with FTS5 and optional vector hybrid search.
+Persistent memory for group chats. Reads messages from any source, extracts structured knowledge via any LLM, stores in SQLite with FTS5 and optional vector hybrid search. Profile-driven entity extraction supports knowledge communities, team chats, project groups, and custom setups.
 
 ## Architecture
 
@@ -18,10 +18,11 @@ src/
   cli.js          — CLI (init, extract, embed, stats, search, who, roster)
   config.js       — Config loader (JSON file + env vars + defaults)
   driver.js       — DB driver abstraction (BetterSqliteDriver / CliDriver)
-  schema.js       — SQLite schema (members, facts, topics, FTS5, vec0)
+  schema.js       — SQLite schema (7 entity tables + FTS5 + vec0, migration)
   store.js        — Read/write knowledge, deduplication, query helpers
-  llm.js          — OpenAI-compatible LLM client
-  extractor.js    — Extraction pipeline orchestrator
+  profiles.js     — Profile definitions, entity metadata, prompt fragments
+  llm.js          — OpenAI-compatible LLM client, dynamic prompt assembly
+  extractor.js    — Extraction pipeline orchestrator (profile-aware)
   embeddings.js   — Embedding pipeline (batching, retries, vec0 tables)
   search.js       — Hybrid search (FTS5 + kNN + RRF merge)
   adapters/
@@ -30,7 +31,7 @@ src/
   enrichers/
     url.js        — URL metadata enrichment (GitHub API, HTML meta)
 test/
-  run.js          — Integration test suite
+  run.js          — Integration test suite (165 tests)
 examples/         — Example config files for various providers
 docs/
   specs/          — Technical design specs
@@ -55,13 +56,26 @@ npm run extract       # Run extraction pipeline
 npm run stats         # Show database statistics
 ```
 
+## Profiles
+
+Profiles control what entity types are extracted and how member fields are interpreted:
+- `knowledge` — members, facts, topics (default, backward-compatible)
+- `team` — + decisions, tasks
+- `project` — + decisions, tasks, questions (no topics)
+- `full` — all 7 entity types
+- `custom` — user picks entity types
+
+Member columns (`expertise`, `projects`) are reused across profiles — the LLM prompt adapts based on profile labels. No schema migration needed.
+
 ## Key Design Decisions
 
 - Model-agnostic: any OpenAI-compatible API works for both LLM and embeddings
+- Profile-driven extraction: LLM prompt assembled dynamically from profile config
 - Deduplication: multi-level (exact prefix match + FTS keyword overlap)
 - Hybrid search: FTS5 + vector kNN merged via Reciprocal Rank Fusion (K=60)
 - Auto-detect available deps at startup — gracefully degrade without optional deps
 - Incremental processing via cursor tracking in extraction_state table
+- Schema migration: v0.3→v0.4 is automatic and idempotent
 
 ## Dependencies
 

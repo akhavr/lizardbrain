@@ -3,4 +3,10 @@ node_modules/
 *.db-wal
 *.db-shm
 .env
+.env*.local
 .DS_Store
+
+# next.js (web/)
+web/.next/
+web/out/
+web/.vercel
