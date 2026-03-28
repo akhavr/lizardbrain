@@ -1,5 +1,5 @@
 {
-  "memoryDbPath": "./clawmem.db",
+  "memoryDbPath": "./lizardbrain.db",
 
   "llm": {
     "baseUrl": "http://localhost:11434/v1",

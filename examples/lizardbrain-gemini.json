@@ -1,5 +1,5 @@
 {
-  "memoryDbPath": "./clawmem.db",
+  "memoryDbPath": "./lizardbrain.db",
 
   "llm": {
     "baseUrl": "https://generativelanguage.googleapis.com/v1beta/openai",

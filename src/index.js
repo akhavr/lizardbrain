@@ -1,31 +1,31 @@
 /**
- * clawmem — Lightweight structured memory extraction for community chats.
+ * lizardbrain — Lightweight structured memory extraction for community chats.
  *
  * Usage (programmatic):
  *
- *   const clawmem = require('clawmem');
+ *   const lizardbrain = require('lizardbrain');
  *
  *   // Initialize database
- *   clawmem.init('./my-memory.db');
+ *   lizardbrain.init('./my-memory.db');
  *
  *   // Create a source adapter
- *   const adapter = clawmem.adapters.sqlite.create({
+ *   const adapter = lizardbrain.adapters.sqlite.create({
  *     path: './chat.db',
  *     table: 'messages',
  *     columns: { id: 'id', content: 'text', sender: 'author', timestamp: 'created_at' },
  *   });
  *
  *   // Create a driver
- *   const driver = clawmem.createDriver('./my-memory.db');
+ *   const driver = lizardbrain.createDriver('./my-memory.db');
  *
  *   // Run extraction
- *   await clawmem.extract(adapter, driver, {
+ *   await lizardbrain.extract(adapter, driver, {
  *     llm: { baseUrl: 'https://api.openai.com/v1', apiKey: 'sk-...', model: 'gpt-4o-mini' },
  *   });
  *
  *   // Query
- *   clawmem.query.searchFacts(driver, 'machine learning');
- *   clawmem.query.whoKnows(driver, 'python');
+ *   lizardbrain.query.searchFacts(driver, 'machine learning');
+ *   lizardbrain.query.whoKnows(driver, 'python');
  *
  *   driver.close();
  */

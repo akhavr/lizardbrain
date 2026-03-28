@@ -1,5 +1,5 @@
 /**
- * embeddings.js — OpenAI-compatible embedding client for clawmem.
+ * embeddings.js — OpenAI-compatible embedding client for lizardbrain.
  * Handles token-aware batching, retry, vec0 table management,
  * model change detection, and backfill logic.
  */
@@ -103,21 +103,21 @@ async function embedWithRetry(texts, config, maxRetries = 3) {
 // --- Metadata helpers ---
 
 /**
- * Reads a value from clawmem_meta table.
+ * Reads a value from lizardbrain_meta table.
  */
 function getMeta(driver, key) {
   const rows = driver.read(
-    `SELECT value FROM clawmem_meta WHERE key = '${esc(key)}'`
+    `SELECT value FROM lizardbrain_meta WHERE key = '${esc(key)}'`
   );
   return rows.length > 0 ? rows[0].value : null;
 }
 
 /**
- * Writes a value to clawmem_meta table (INSERT OR REPLACE).
+ * Writes a value to lizardbrain_meta table (INSERT OR REPLACE).
  */
 function setMeta(driver, key, value) {
   driver.write(
-    `INSERT OR REPLACE INTO clawmem_meta (key, value, updated_at) VALUES ('${esc(key)}', '${esc(String(value))}', datetime('now'))`
+    `INSERT OR REPLACE INTO lizardbrain_meta (key, value, updated_at) VALUES ('${esc(key)}', '${esc(String(value))}', datetime('now'))`
   );
 }
 
@@ -224,7 +224,7 @@ function getEmbeddingStats(driver) {
  */
 async function backfill(driver, config, options = {}) {
   if (!driver.capabilities.vectors) {
-    console.warn('[clawmem:embeddings] Skipping backfill — vector capability unavailable');
+    console.warn('[lizardbrain:embeddings] Skipping backfill — vector capability unavailable');
     return { ok: false, skipped: true, reason: 'vectors_unavailable' };
   }
 
@@ -248,7 +248,7 @@ async function backfill(driver, config, options = {}) {
 
   if (!dimensions) {
     // Auto-detect via probe call
-    console.log('[clawmem:embeddings] Detecting dimensions via probe embedding...');
+    console.log('[lizardbrain:embeddings] Detecting dimensions via probe embedding...');
     const probe = await embedWithRetry(['probe'], config);
     dimensions = probe.dimensions;
   }
@@ -259,7 +259,7 @@ async function backfill(driver, config, options = {}) {
       driver.write(`DROP TABLE IF EXISTS ${table}`);
     }
     for (const key of ['embedding_model', 'embedding_dimensions', 'embedding_base_url']) {
-      driver.write(`DELETE FROM clawmem_meta WHERE key = '${esc(key)}'`);
+      driver.write(`DELETE FROM lizardbrain_meta WHERE key = '${esc(key)}'`);
     }
   }
 

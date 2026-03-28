@@ -1,5 +1,5 @@
 /**
- * schema.js — Creates and manages the clawmem SQLite schema.
+ * schema.js — Creates and manages the lizardbrain SQLite schema.
  */
 
 const { createDriver } = require('./driver');
@@ -122,7 +122,7 @@ CREATE TABLE IF NOT EXISTS extraction_state (
 INSERT OR IGNORE INTO extraction_state (id) VALUES (1);
 
 -- Metadata key-value store
-CREATE TABLE IF NOT EXISTS clawmem_meta (
+CREATE TABLE IF NOT EXISTS lizardbrain_meta (
   key TEXT PRIMARY KEY,
   value TEXT,
   updated_at TEXT DEFAULT (datetime('now'))

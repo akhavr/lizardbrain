@@ -12,7 +12,7 @@ async function run(adapter, driver, config, options = {}) {
 
   const log = (msg) => console.log(msg);
 
-  log(`[${new Date().toISOString()}] clawmem extraction`);
+  log(`[${new Date().toISOString()}] lizardbrain extraction`);
   log(`Memory DB: ${driver.dbPath}`);
   log(`Backend: ${driver.backend}`);
   log(`Source: ${adapter.name}`);

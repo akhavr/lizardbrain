@@ -1,5 +1,5 @@
 /**
- * driver.js — Database driver abstraction for clawmem.
+ * driver.js — Database driver abstraction for lizardbrain.
  * Tries better-sqlite3 at startup, falls back to sqlite3 CLI.
  */
 
@@ -56,7 +56,7 @@ class CliDriver {
       }
       const msg = err.stderr?.toString() || err.message;
       if (msg.includes('no such table') || msg.includes('no such column')) return [];
-      console.error(`[clawmem:driver:cli] read error: ${msg}`);
+      console.error(`[lizardbrain:driver:cli] read error: ${msg}`);
       return [];
     }
   }
@@ -77,7 +77,7 @@ class CliDriver {
         return obj;
       });
     } catch (err) {
-      console.error(`[clawmem:driver:cli] readFallback error: ${err.stderr?.toString() || err.message}`);
+      console.error(`[lizardbrain:driver:cli] readFallback error: ${err.stderr?.toString() || err.message}`);
       return [];
     }
   }
@@ -90,7 +90,7 @@ class CliDriver {
       });
       return { changes: -1 };
     } catch (err) {
-      console.error(`[clawmem:driver:cli] write error: ${err.stderr?.toString() || err.message}`);
+      console.error(`[lizardbrain:driver:cli] write error: ${err.stderr?.toString() || err.message}`);
       return { changes: 0 };
     }
   }
@@ -149,7 +149,7 @@ class BetterSqliteDriver {
       if (err.message.includes('no such table') || err.message.includes('no such column')) {
         return [];
       }
-      console.error(`[clawmem:driver:better-sqlite3] read error: ${err.message}`);
+      console.error(`[lizardbrain:driver:better-sqlite3] read error: ${err.message}`);
       return [];
     }
   }
@@ -164,7 +164,7 @@ class BetterSqliteDriver {
         this._db.exec(sql);
         return { changes: -1 };
       } catch (err2) {
-        console.error(`[clawmem:driver:better-sqlite3] write error: ${err2.message}`);
+        console.error(`[lizardbrain:driver:better-sqlite3] write error: ${err2.message}`);
         return { changes: -1 };
       }
     }

@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * Basic integration test for chatmem.
+ * Basic integration test for lizardbrain.
  * Creates a test SQLite source, runs extraction with a mock LLM, verifies results.
  */
 
@@ -8,7 +8,7 @@ const { execSync } = require('child_process');
 const path = require('path');
 const fs = require('fs');
 
-const chatmem = require('../src/index');
+const lizardbrain = require('../src/index');
 const store = require('../src/store');
 const { createDriver, esc } = require('../src/driver');
 
@@ -62,7 +62,7 @@ function cleanup() {
 function testInit() {
   console.log('\n--- Test: init ---');
 
-  const result = chatmem.init(MEMORY_DB);
+  const result = lizardbrain.init(MEMORY_DB);
   assert(result.created === true, 'Database created');
   assert(fs.existsSync(MEMORY_DB), 'File exists on disk');
 
@@ -75,14 +75,14 @@ function testInit() {
   assert(tables.includes('extraction_state'), 'extraction_state table exists');
 
   // Idempotent
-  const result2 = chatmem.init(MEMORY_DB);
+  const result2 = lizardbrain.init(MEMORY_DB);
   assert(result2.created === false, 'Second init skips creation');
 }
 
 function testAdapter() {
   console.log('\n--- Test: sqlite adapter ---');
 
-  const adapter = chatmem.adapters.sqlite.create({
+  const adapter = lizardbrain.adapters.sqlite.create({
     path: SOURCE_DB,
     table: 'messages',
     columns: { id: 'id', content: 'content', sender: 'sender', timestamp: 'timestamp' },
@@ -111,7 +111,7 @@ function testJsonlAdapter() {
   ];
   fs.writeFileSync(jsonlPath, lines.join('\n'));
 
-  const adapter = chatmem.adapters.jsonl.create({ path: jsonlPath });
+  const adapter = lizardbrain.adapters.jsonl.create({ path: jsonlPath });
   const validation = adapter.validate();
   assert(validation.ok === true, 'JSONL adapter validates');
 
@@ -262,7 +262,7 @@ function testConversationFilter() {
     stdio: ['pipe', 'pipe', 'pipe'],
   });
 
-  const adapter = chatmem.adapters.sqlite.create({
+  const adapter = lizardbrain.adapters.sqlite.create({
     path: CONV_DB,
     table: 'messages',
     columns: { id: 'id', content: 'content', sender: 'sender', timestamp: 'timestamp' },
@@ -457,9 +457,9 @@ async function testUrlEnrichment() {
 
   // Test with a known GitHub repo
   const messages = [
-    { id: '1', content: 'Check out https://github.com/pandore/clawmem for memory extraction', sender: 'Alice', timestamp: '2026-03-17' },
+    { id: '1', content: 'Check out https://github.com/pandore/lizardbrain for memory extraction', sender: 'Alice', timestamp: '2026-03-17' },
     { id: '2', content: 'No URLs in this message', sender: 'Bob', timestamp: '2026-03-17' },
-    { id: '3', content: 'Multiple URLs: https://github.com/pandore/clawmem and https://example.com', sender: 'Alice', timestamp: '2026-03-17' },
+    { id: '3', content: 'Multiple URLs: https://github.com/pandore/lizardbrain and https://example.com', sender: 'Alice', timestamp: '2026-03-17' },
   ];
 
   const result = await urlEnricher.enrichMessages(messages, { timeoutMs: 10000 });
@@ -467,7 +467,7 @@ async function testUrlEnrichment() {
 
   // GitHub URL should have been enriched with repo info
   const msg1 = messages[0].content;
-  assert(msg1.includes('[') && msg1.includes('clawmem'), `GitHub URL enriched: ${msg1.substring(0, 120)}...`);
+  assert(msg1.includes('[') && msg1.includes('lizardbrain'), `GitHub URL enriched: ${msg1.substring(0, 120)}...`);
 
   // Message without URLs should be unchanged
   assert(messages[1].content === 'No URLs in this message', 'Non-URL message unchanged');

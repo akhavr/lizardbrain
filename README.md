@@ -1,68 +1,72 @@
-# clawmem
+# Lizardbrain
 
-Lightweight structured memory for community chats. Reads messages from any source, extracts knowledge (members, facts, topics) via any LLM, stores in a searchable SQLite database with full-text search.
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+[![Node.js >= 18](https://img.shields.io/badge/node-%3E%3D18-brightgreen.svg)](https://nodejs.org)
+[![Version](https://img.shields.io/badge/version-0.3.0-orange.svg)](package.json)
 
-Born from the [OpenClaw](https://github.com/open-claw/openclaw) ecosystem — built to give AI agents persistent memory of group conversations. Works standalone with any chat source and any LLM provider.
+**Persistent memory for group chats.** Reads messages from any source, extracts structured knowledge via any LLM, stores it in SQLite with full-text and hybrid vector search.
 
-**Two tiers, one codebase.** Core tier: zero dependencies, FTS5 keyword search. Vector tier: add `better-sqlite3` + `sqlite-vec` for hybrid search (FTS5 + vector kNN + RRF merge). Auto-detects available deps at startup.
-
-## How It Works
+Give your AI agent a brain that remembers what your community talks about.
 
 ```
-[Chat Source] → [Adapter] → [LLM Extraction] → [SQLite + FTS5]
-                                                       ↓
-                                          (if better-sqlite3 + sqlite-vec)
-                                                       ↓
-                                               [Embedding Pipeline] → [vec0 tables]
-                                                       ↓
-                                               [Hybrid Search: FTS5 + kNN + RRF]
+Chat Source  -->  Adapter  -->  LLM Extraction  -->  SQLite + FTS5
+                                                          |
+                                             (optional: better-sqlite3 + sqlite-vec)
+                                                          |
+                                                   Embedding Pipeline --> vec0 tables
+                                                          |
+                                                   Hybrid Search (FTS5 + kNN + RRF)
 ```
 
-1. **Adapter** reads new messages from your chat database (SQLite, JSONL, or custom)
-2. **LLM** extracts structured knowledge — members, facts, topics — via any OpenAI-compatible API
-3. **SQLite + FTS5** stores everything with full-text search, auto-synced indexes, and deduplication
+---
 
-Runs incrementally: tracks a cursor, only processes new messages each run. Designed to run on a cron (every 1-2 hours recommended).
+## Highlights
+
+- **Model-agnostic** -- works with any OpenAI-compatible API (OpenAI, Gemini, Groq, Ollama, Mistral, etc.)
+- **Two tiers, one codebase** -- core tier has zero dependencies; add `better-sqlite3` + `sqlite-vec` for hybrid vector search
+- **Incremental** -- tracks a cursor, only processes new messages each run
+- **Smart deduplication** -- multi-level (exact match + FTS keyword overlap) prevents duplicate facts
+- **Hybrid search** -- FTS5 keyword + vector kNN merged via Reciprocal Rank Fusion
+- **URL enrichment** -- auto-fetches metadata for links (GitHub stars, page titles) before LLM extraction
+- **Pluggable sources** -- SQLite, JSONL, or write your own adapter in 10 lines
+- **Roster generation** -- compact member profiles (~30 tokens each) designed for agent context windows
+
+---
 
 ## Quick Start
 
 ```bash
-# Clone
-git clone https://github.com/pandore/clawmem
-cd clawmem
+git clone https://github.com/pandore/lizardbrain && cd lizardbrain
 
-# Create config
-cp examples/clawmem.json clawmem.json
-# Edit clawmem.json — point to your chat DB and LLM
+cp examples/lizardbrain.json lizardbrain.json
+# Edit lizardbrain.json -- set your chat DB path and LLM provider
 
-# Initialize memory database
 node src/cli.js init
-
-# Run extraction
-CLAWMEM_LLM_API_KEY=your-key node src/cli.js extract
-
-# Optional: enable hybrid vector search
-npm install better-sqlite3 sqlite-vec
-
-# Add embedding config to clawmem.json:
-#   "embedding": { "enabled": true, "baseUrl": "...", "model": "..." }
-
-# Embed existing knowledge
-CLAWMEM_EMBEDDING_API_KEY=your-key node src/cli.js embed --backfill
+LIZARDBRAIN_LLM_API_KEY=your-key node src/cli.js extract
 
 # Query
-node src/cli.js stats
 node src/cli.js search "RAG pipeline"
 node src/cli.js who "python"
+node src/cli.js stats
 ```
+
+**Enable hybrid vector search** (optional):
+
+```bash
+npm install better-sqlite3 sqlite-vec
+# Add to lizardbrain.json: "embedding": { "enabled": true, "baseUrl": "...", "model": "..." }
+LIZARDBRAIN_EMBEDDING_API_KEY=your-key node src/cli.js embed --backfill
+```
+
+---
 
 ## Configuration
 
-Create `clawmem.json` in your working directory:
+Create `lizardbrain.json` in your working directory:
 
 ```json
 {
-  "memoryDbPath": "./clawmem.db",
+  "memoryDbPath": "./lizardbrain.db",
   "batchSize": 40,
   "minMessages": 5,
 
@@ -92,44 +96,43 @@ Create `clawmem.json` in your working directory:
 }
 ```
 
-API key goes in `.env`, environment variable (`CLAWMEM_LLM_API_KEY`), or directly in config.
+API key via `.env` file, environment variable (`LIZARDBRAIN_LLM_API_KEY`), or directly in config.
 
 ### LLM Providers
 
-clawmem works with any OpenAI-compatible chat completions API. Pick whatever fits your budget:
+Any OpenAI-compatible chat completions API. Cheap/fast models work great for extraction -- you don't need a frontier model to pull facts out of chat messages.
 
-| Provider | `baseUrl` | Recommended model | Cost (per 1M tokens) |
-|----------|-----------|-------------------|----------------------|
+| Provider | `baseUrl` | Model | Cost (input/output per 1M) |
+|----------|-----------|-------|----------------------------|
 | OpenAI | `https://api.openai.com/v1` | `gpt-5-nano` | $0.05 / $0.40 |
 | Gemini | `https://generativelanguage.googleapis.com/v1beta/openai` | `gemini-2.5-flash-lite` | $0.10 / $0.40 |
-| Gemini | `https://generativelanguage.googleapis.com/v1beta/openai` | `gemini-3-flash-preview` | $0.50 / $3.00 |
 | Groq | `https://api.groq.com/openai/v1` | `llama-3.3-70b-instruct` | $0.10 / $0.32 |
 | Mistral | `https://api.mistral.ai/v1` | `ministral-3b-2512` | $0.10 / $0.10 |
-| Anthropic | `https://api.anthropic.com/v1/` | `claude-haiku-4.5` | $1.00 / $5.00 |
 | Ollama | `http://localhost:11434/v1` | `qwen2.5:7b` | free (local) |
 | OpenRouter | `https://openrouter.ai/api/v1` | `meta-llama/llama-4-scout` | $0.08 / $0.30 |
-| Together AI | `https://api.together.xyz/v1` | `meta-llama/Llama-3.1-8B-Instruct-Turbo` | ~$0.05 |
-| LM Studio | `http://localhost:1234/v1` | any local model | free (local) |
 
-For extraction tasks, cheap/fast models work great. You don't need a frontier model to pull facts out of chat messages.
+<details>
+<summary>Embedding providers</summary>
 
-### Embedding Providers
+Works with any OpenAI-compatible `/v1/embeddings` endpoint. You can mix providers -- e.g., cheap LLM (Groq) for extraction + quality embeddings (OpenAI) for search.
 
-When hybrid search is enabled, clawmem needs an embedding API. Works with any OpenAI-compatible `/v1/embeddings` endpoint:
-
-| Provider | `embedding.baseUrl` | Recommended model | Dimensions |
-|----------|---------------------|-------------------|------------|
+| Provider | `embedding.baseUrl` | Model | Dimensions |
+|----------|---------------------|-------|------------|
 | OpenAI | `https://api.openai.com/v1` | `text-embedding-3-small` | 1536 |
 | Gemini | `https://generativelanguage.googleapis.com/v1beta/openai` | `text-embedding-004` | 768 |
 | Ollama | `http://localhost:11434/v1` | `nomic-embed-text` | 768 |
 
-You can mix providers — e.g., cheap LLM (Groq) for extraction + quality embeddings (OpenAI) for search. See `examples/clawmem-mixed.json`.
+See `examples/lizardbrain-mixed.json` for a mixed-provider config.
 
-### Source Adapters
+</details>
 
-#### SQLite (default)
+---
 
-Point at any SQLite database with a messages table:
+## Source Adapters
+
+### SQLite (default)
+
+Point at any SQLite database with a messages table. Works with OpenClaw LCM, Telegram exports, or any custom schema.
 
 ```json
 {
@@ -137,22 +140,16 @@ Point at any SQLite database with a messages table:
     "type": "sqlite",
     "path": "./chat.db",
     "table": "messages",
-    "columns": {
-      "id": "message_id",
-      "content": "text",
-      "sender": "author",
-      "timestamp": "created_at"
-    },
+    "columns": { "id": "message_id", "content": "text", "sender": "author", "timestamp": "created_at" },
     "filter": "channel = 'general'"
   }
 }
 ```
 
-Works out of the box with OpenClaw's LCM database, Telegram export databases, or any custom schema.
+<details>
+<summary>Conversation filtering (group-only extraction)</summary>
 
-#### Conversation Filtering (group-only extraction)
-
-If your source has both group chats and DMs, you can restrict extraction to group conversations only:
+Restrict extraction to group chats only -- prevents private messages from leaking into shared memory:
 
 ```json
 {
@@ -167,11 +164,11 @@ If your source has both group chats and DMs, you can restrict extraction to grou
 }
 ```
 
-clawmem auto-detects which conversations are group chats (>50% of messages contain the marker) and excludes DMs/system sessions. This prevents private messages from leaking into shared memory.
+Auto-detects group chats (>50% of messages contain the marker) and excludes DMs.
 
-#### JSONL
+</details>
 
-One JSON object per line:
+### JSONL
 
 ```json
 {
@@ -183,13 +180,7 @@ One JSON object per line:
 }
 ```
 
-#### Custom Adapter
-
-For anything else, point to a JS file:
-
-```json
-{ "source": { "type": "custom", "adapterPath": "./my-adapter.js" } }
-```
+### Custom Adapter
 
 ```js
 // my-adapter.js
@@ -197,98 +188,105 @@ module.exports = {
   name: 'my-source',
   validate() { return { ok: true }; },
   getMessages(afterId) {
-    // Return array of { id, content, sender, timestamp }
-    return [...]
+    return [{ id: '1', content: 'hello', sender: 'alice', timestamp: '2026-01-01' }];
   }
 };
 ```
 
-## CLI
+```json
+{ "source": { "type": "custom", "adapterPath": "./my-adapter.js" } }
+```
+
+---
+
+## CLI Reference
 
 ```
-clawmem init [--force]                         Create memory database
-clawmem extract [--dry-run] [--reprocess]      Run extraction pipeline
-clawmem embed [--stats] [--rebuild]            Manage vector embeddings
-clawmem stats                                  Show database statistics
-clawmem search <query> [--json] [--fts-only]   Search knowledge (hybrid or FTS5)
-clawmem who <keyword>                          Find members by expertise
-clawmem roster [--output path]                 Generate compact member roster
+lizardbrain init [--force]                          Create memory database
+lizardbrain extract [--dry-run] [--reprocess]       Run extraction pipeline
+lizardbrain embed [--stats] [--rebuild]             Manage vector embeddings
+lizardbrain stats                                   Show database statistics
+lizardbrain search <query> [--json] [--fts-only]    Search knowledge (hybrid or FTS5)
+lizardbrain who <keyword>                           Find members by expertise
+lizardbrain roster [--output path]                  Generate compact member roster
 ```
+
+| Flag | Description |
+|------|-------------|
+| `--config <path>` | Path to config file |
+| `--roster <path>` | Generate roster after extraction |
+| `--no-enrich` | Skip URL metadata enrichment |
+| `--no-embed` | Skip auto-embedding after extraction |
+
+### Environment Variables
+
+| Variable | Description |
+|----------|-------------|
+| `LIZARDBRAIN_LLM_API_KEY` | LLM API key |
+| `LIZARDBRAIN_LLM_BASE_URL` | LLM API base URL |
+| `LIZARDBRAIN_LLM_MODEL` | LLM model name |
+| `LIZARDBRAIN_EMBEDDING_API_KEY` | Embedding API key |
+| `LIZARDBRAIN_EMBEDDING_BASE_URL` | Embedding API base URL |
+| `LIZARDBRAIN_EMBEDDING_MODEL` | Embedding model name |
+| `LIZARDBRAIN_DB_PATH` | Path to memory database |
+
+---
 
 ## Programmatic API
 
 ```js
-const clawmem = require('clawmem');
+const lizardbrain = require('lizardbrain');
 
-// Initialize
-clawmem.init('./memory.db');
+lizardbrain.init('./memory.db');
 
-// Create adapter + driver
-const adapter = clawmem.adapters.sqlite.create({
+const adapter = lizardbrain.adapters.sqlite.create({
   path: './chat.db',
   table: 'messages',
   columns: { id: 'id', content: 'text', sender: 'author', timestamp: 'created_at' },
 });
-const driver = clawmem.createDriver('./memory.db');
+const driver = lizardbrain.createDriver('./memory.db');
 
-// Extract
-await clawmem.extract(adapter, driver, {
+await lizardbrain.extract(adapter, driver, {
   llm: { baseUrl: 'https://api.openai.com/v1', apiKey: process.env.OPENAI_API_KEY, model: 'gpt-5-nano' },
 });
 
-// Search (hybrid when vectors available, FTS5 fallback)
-const { mode, results } = await clawmem.search(driver, 'kubernetes', { limit: 5 });
+// Hybrid search (auto-falls back to FTS5 if vectors unavailable)
+const { mode, results } = await lizardbrain.search(driver, 'kubernetes', { limit: 5 });
 
 // Query helpers
-const facts = clawmem.query.searchFacts(driver, 'kubernetes');
-const experts = clawmem.query.whoKnows(driver, 'python');
+const facts = lizardbrain.query.searchFacts(driver, 'kubernetes');
+const experts = lizardbrain.query.whoKnows(driver, 'python');
 
 driver.close();
 ```
 
-## URL Enrichment
+---
 
-When messages contain URLs, clawmem automatically fetches metadata before sending to the LLM:
+## How It Works
 
-- **Web pages**: fetches `<title>` and `og:description` (or `<meta description>`)
-- **GitHub repos**: uses GitHub API to get description + star count
+### Extraction Pipeline
 
-This means the LLM sees:
-```
-Alice: Check out https://github.com/akhavr/nightshift [akhavr/nightshift — Claude Code task management tool | 234 stars]
-```
-instead of just a bare URL — enabling meaningful fact extraction from shared links.
+1. **Adapter** reads new messages after the last cursor position
+2. **URL enricher** fetches metadata for links (GitHub repos get description + stars, web pages get title + og:description)
+3. **LLM** extracts structured knowledge as JSON -- members, facts, topics -- with confidence scores
+4. **Store** deduplicates and writes to SQLite with auto-synced FTS5 indexes
+5. **Embedder** (optional) generates vectors for hybrid search
 
-Enabled by default. Disable with `--no-enrich` or `enrichUrls: false` in options.
-
-## Roster Generation
-
-Generate a compact markdown roster of all members with their expertise and projects:
+Designed to run on a cron every 1-2 hours:
 
 ```bash
-# Print to stdout
-clawmem roster
-
-# Write to file
-clawmem roster --output ./MEMBERS.md
-
-# Auto-generate after every extraction (set in config)
-# "rosterPath": "./MEMBERS.md"
+0 */2 * * * cd /path/to/project && LIZARDBRAIN_LLM_API_KEY=key node src/cli.js extract >> /tmp/lizardbrain.log 2>&1
 ```
 
-Output format (~30-50 tokens per member):
-```
-# Community Members
+### What Gets Extracted
 
-- **Alice** — RAG, LangChain, Python | builds: pipeline, search-tool
-- **Bob** — LlamaIndex, embeddings | builds: pdf-processor
-```
+| Entity | Fields | Example |
+|--------|--------|---------|
+| **Members** | username, expertise, projects | Alice -- RAG, LangChain \| builds: pipeline |
+| **Facts** | category, content, confidence, tags | "LangChain works well with chunk size 512" (0.9) |
+| **Topics** | name, summary, participants | "RAG Pipeline Comparison" -- Alice, Bob |
 
-This is designed to be loaded into an AI agent's context window for passive awareness of community members. At 100 members it's ~3,000 tokens — cheap enough to always include.
-
-## Confidence Scores
-
-Facts are scored for confidence during extraction:
+### Confidence Scores
 
 | Score | Meaning | Example |
 |-------|---------|---------|
@@ -296,29 +294,26 @@ Facts are scored for confidence during extraction:
 | 0.75-0.89 | Opinions, experiences | "LlamaIndex works better for large PDFs" |
 | 0.5-0.74 | Secondhand, speculation | "I heard they might release a new model" |
 
-Filter by confidence in queries:
+### Roster Generation
 
-```js
-// Only high-confidence facts
-clawmem.query.searchFacts(driver, 'pricing', 15, 0.75);
+Generate a compact member roster for agent context windows (~30-50 tokens per member):
+
+```
+# Community Members
+
+- **Alice** -- RAG, LangChain, Python | builds: pipeline, search-tool
+- **Bob** -- LlamaIndex, embeddings | builds: pdf-processor
 ```
 
-## Cron Setup
+At 100 members it's ~3,000 tokens -- cheap enough to always include in an agent's system prompt.
 
 ```bash
-# Every 2 hours — gives enough messages per batch for good extraction quality
-0 */2 * * * cd /path/to/project && CLAWMEM_LLM_API_KEY=key node src/cli.js extract >> /tmp/clawmem.log 2>&1
-
-# With hybrid search enabled
-0 */2 * * * cd /path/to/project && CLAWMEM_LLM_API_KEY=key CLAWMEM_EMBEDDING_API_KEY=ekey node src/cli.js extract >> /tmp/clawmem.log 2>&1
-
-# With auto-roster generation
-0 */2 * * * cd /path/to/project && CLAWMEM_LLM_API_KEY=key node src/cli.js extract --roster ./MEMBERS.md >> /tmp/clawmem.log 2>&1
+lizardbrain roster --output ./MEMBERS.md
 ```
 
-## Schema
+---
 
-clawmem creates these tables in SQLite:
+## Database Schema
 
 | Table | Contents |
 |-------|----------|
@@ -326,34 +321,30 @@ clawmem creates these tables in SQLite:
 | `facts` | category, content, source member, tags, confidence, date |
 | `topics` | name, summary, participants, tags, date |
 | `extraction_state` | cursor position, run counters |
-| `clawmem_meta` | key-value store for embedding model, dimensions |
+| `lizardbrain_meta` | key-value store (embedding model, dimensions) |
 | `*_fts` | FTS5 full-text search indexes (auto-synced via triggers) |
 | `*_vec` | vec0 vector tables for kNN search (created on first embed) |
 
 Query directly:
 
 ```bash
-sqlite3 -json clawmem.db "SELECT * FROM facts_fts WHERE facts_fts MATCH 'docker'"
-sqlite3 -json clawmem.db "SELECT display_name, expertise FROM members WHERE expertise LIKE '%python%'"
-sqlite3 -json clawmem.db "SELECT name, summary FROM topics ORDER BY created_at DESC LIMIT 10"
+sqlite3 -json lizardbrain.db "SELECT * FROM facts_fts WHERE facts_fts MATCH 'docker'"
+sqlite3 -json lizardbrain.db "SELECT display_name, expertise FROM members WHERE expertise LIKE '%python%'"
 ```
+
+---
 
 ## Requirements
 
-**Core tier (zero dependencies):**
-- Node.js >= 18 (uses built-in `fetch`)
-- `sqlite3` CLI with FTS5 support (included on macOS and most Linux distros)
+| Tier | Dependencies |
+|------|-------------|
+| **Core** (zero deps) | Node.js >= 18, `sqlite3` CLI with FTS5 (included on macOS/Linux) |
+| **Vector** (optional) | + `better-sqlite3` + `sqlite-vec` + any embedding API |
 
-**Vector tier (optional, for hybrid search):**
-- `better-sqlite3` — in-process SQLite driver
-- `sqlite-vec` — SQLite extension for vector search
-- An embedding API endpoint (OpenAI, Gemini, Ollama, etc.)
-
-Install: `npm install better-sqlite3 sqlite-vec`
-
-## Background
-
-Built as the memory layer for [LEVI](https://github.com/pandore/limbai-tech), an AI community agent running on [OpenClaw](https://github.com/open-claw/openclaw) in the LIMB.AI/TECH Telegram group. Extracted into a standalone library because every community chat deserves searchable memory.
+```bash
+# Enable vector tier
+npm install better-sqlite3 sqlite-vec
+```
 
 ## License
 

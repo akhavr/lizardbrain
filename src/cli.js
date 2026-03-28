@@ -1,21 +1,21 @@
 #!/usr/bin/env node
 /**
- * clawmem CLI — Command-line interface for clawmem.
+ * lizardbrain CLI — Command-line interface for lizardbrain.
  *
  * Usage:
- *   clawmem init [--force]                    Create memory database
- *   clawmem extract [--dry-run] [--reprocess] Run extraction pipeline
- *   clawmem stats                             Show database statistics
- *   clawmem search <query>                    Search facts and topics
- *   clawmem who <keyword>                     Find members with expertise
+ *   lizardbrain init [--force]                    Create memory database
+ *   lizardbrain extract [--dry-run] [--reprocess] Run extraction pipeline
+ *   lizardbrain stats                             Show database statistics
+ *   lizardbrain search <query>                    Search facts and topics
+ *   lizardbrain who <keyword>                     Find members with expertise
  *
  * Configuration:
- *   Place a clawmem.json in your working directory, or use environment variables.
+ *   Place a lizardbrain.json in your working directory, or use environment variables.
  *   See README.md for details.
  */
 
 const path = require('path');
-const clawmem = require('./index');
+const lizardbrain = require('./index');
 const config = require('./config');
 const { createDriver, dbExists } = require('./driver');
 
@@ -34,21 +34,21 @@ async function main() {
 
   switch (command) {
     case 'init': {
-      const result = clawmem.init(cfg.memoryDbPath, { force: flag('force') });
+      const result = lizardbrain.init(cfg.memoryDbPath, { force: flag('force') });
       console.log(result.message);
       break;
     }
 
     case 'extract': {
       if (!dbExists(cfg.memoryDbPath)) {
-        console.log('Memory database not found. Run `clawmem init` first.');
+        console.log('Memory database not found. Run `lizardbrain init` first.');
         process.exit(1);
       }
 
       const driver = createDriver(cfg.memoryDbPath);
       const adapter = createAdapter(cfg.source);
       const rosterOutput = flag('roster') ? args[args.indexOf('--roster') + 1] : (cfg.rosterPath || null);
-      const result = await clawmem.extract(adapter, driver, cfg, {
+      const result = await lizardbrain.extract(adapter, driver, cfg, {
         dryRun: flag('dry-run'),
         reprocess: flag('reprocess'),
         rosterPath: rosterOutput,
@@ -67,13 +67,13 @@ async function main() {
 
     case 'stats': {
       if (!dbExists(cfg.memoryDbPath)) {
-        console.log('Memory database not found. Run `clawmem init` first.');
+        console.log('Memory database not found. Run `lizardbrain init` first.');
         process.exit(1);
       }
 
       const driver = createDriver(cfg.memoryDbPath);
-      const stats = clawmem.query.getStats(driver);
-      console.log('\n=== clawmem stats ===');
+      const stats = lizardbrain.query.getStats(driver);
+      console.log('\n=== lizardbrain stats ===');
       console.log(`Members:  ${stats.members}`);
       console.log(`Facts:    ${stats.facts}`);
       console.log(`Topics:   ${stats.topics}`);
@@ -104,7 +104,7 @@ async function main() {
     case 'search': {
       const queryText = args.slice(1).filter(a => !a.startsWith('--')).join(' ');
       if (!queryText) {
-        console.log('Usage: clawmem search <query>');
+        console.log('Usage: lizardbrain search <query>');
         process.exit(1);
       }
       const driver = createDriver(cfg.memoryDbPath);
@@ -134,11 +134,11 @@ async function main() {
 
     case 'embed': {
       if (!dbExists(cfg.memoryDbPath)) {
-        console.log('Memory database not found. Run `clawmem init` first.');
+        console.log('Memory database not found. Run `lizardbrain init` first.');
         process.exit(1);
       }
       if (!cfg.embedding?.enabled) {
-        console.log('Embedding not configured. Add an "embedding" block to clawmem.json with enabled: true.');
+        console.log('Embedding not configured. Add an "embedding" block to lizardbrain.json with enabled: true.');
         process.exit(1);
       }
       const driver = createDriver(cfg.memoryDbPath);
@@ -172,12 +172,12 @@ async function main() {
     case 'who': {
       const keyword = args.slice(1).join(' ');
       if (!keyword) {
-        console.log('Usage: clawmem who <keyword>');
+        console.log('Usage: lizardbrain who <keyword>');
         process.exit(1);
       }
 
       const driver = createDriver(cfg.memoryDbPath);
-      const members = clawmem.query.whoKnows(driver, keyword);
+      const members = lizardbrain.query.whoKnows(driver, keyword);
       driver.close();
 
       if (members.length > 0) {
@@ -196,12 +196,12 @@ async function main() {
 
     case 'roster': {
       if (!dbExists(cfg.memoryDbPath)) {
-        console.log('Memory database not found. Run `clawmem init` first.');
+        console.log('Memory database not found. Run `lizardbrain init` first.');
         process.exit(1);
       }
 
       const driver = createDriver(cfg.memoryDbPath);
-      const roster = clawmem.query.generateRoster(driver);
+      const roster = lizardbrain.query.generateRoster(driver);
       driver.close();
 
       const outputIdx = args.indexOf('--output');
@@ -217,7 +217,7 @@ async function main() {
     }
 
     default:
-      console.log(`clawmem — Lightweight structured memory for community chats
+      console.log(`lizardbrain — Lightweight structured memory for community chats
 
 Commands:
   init [--force]                    Create memory database
@@ -229,19 +229,19 @@ Commands:
   roster [--output path]            Generate member roster
 
 Options:
-  --config <path>                   Path to clawmem.json config file
+  --config <path>                   Path to lizardbrain.json config file
   --roster <path>                   Generate roster after extraction
   --no-enrich                       Skip URL metadata enrichment
   --no-embed                        Skip auto-embedding after extraction
 
 Environment variables:
-  CLAWMEM_DB_PATH                   Path to memory database
-  CLAWMEM_LLM_BASE_URL             LLM API base URL
-  CLAWMEM_LLM_API_KEY              LLM API key
-  CLAWMEM_LLM_MODEL                LLM model name
-  CLAWMEM_EMBEDDING_BASE_URL       Embedding API base URL
-  CLAWMEM_EMBEDDING_API_KEY        Embedding API key
-  CLAWMEM_EMBEDDING_MODEL          Embedding model name
+  LIZARDBRAIN_DB_PATH                   Path to memory database
+  LIZARDBRAIN_LLM_BASE_URL             LLM API base URL
+  LIZARDBRAIN_LLM_API_KEY              LLM API key
+  LIZARDBRAIN_LLM_MODEL                LLM model name
+  LIZARDBRAIN_EMBEDDING_BASE_URL       Embedding API base URL
+  LIZARDBRAIN_EMBEDDING_API_KEY        Embedding API key
+  LIZARDBRAIN_EMBEDDING_MODEL          Embedding model name
 `);
   }
 }
@@ -251,9 +251,9 @@ function createAdapter(sourceConfig) {
 
   switch (type) {
     case 'sqlite':
-      return clawmem.adapters.sqlite.create(sourceConfig);
+      return lizardbrain.adapters.sqlite.create(sourceConfig);
     case 'jsonl':
-      return clawmem.adapters.jsonl.create(sourceConfig);
+      return lizardbrain.adapters.jsonl.create(sourceConfig);
     case 'custom':
       if (sourceConfig.adapterPath) {
         const custom = require(path.resolve(sourceConfig.adapterPath));

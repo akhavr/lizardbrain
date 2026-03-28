@@ -41,7 +41,7 @@ function mergeRRF(resultSets, K = 60) {
 /**
  * Run FTS5 keyword search across facts, topics, and members.
  *
- * @param {object} driver - clawmem driver instance
+ * @param {object} driver - lizardbrain driver instance
  * @param {string} query - Search query string
  * @param {number} limit - Max results per table
  * @returns {Array<{key: string, data: object}>}
@@ -122,7 +122,7 @@ function ftsSearch(driver, query, limit) {
  * Run vector kNN search across facts_vec, topics_vec, and members_vec.
  * Requires driver._db (raw better-sqlite3) and sqlite-vec extension loaded.
  *
- * @param {object} driver - clawmem driver instance with ._db
+ * @param {object} driver - lizardbrain driver instance with ._db
  * @param {number[]} queryEmbedding - Query vector as array of floats
  * @param {number} limit - Max results per table
  * @returns {Array<{key: string, data: object}>}
@@ -224,7 +224,7 @@ function vecSearch(driver, queryEmbedding, limit) {
 /**
  * Main search function — hybrid FTS5 + vector kNN, or FTS5-only fallback.
  *
- * @param {object} driver - clawmem driver instance
+ * @param {object} driver - lizardbrain driver instance
  * @param {string} query - Search query string
  * @param {object} options
  * @param {number} [options.limit=10] - Max results to return
@@ -264,7 +264,7 @@ async function search(driver, query, options = {}) {
 
       return { mode: 'hybrid', results };
     } catch (err) {
-      console.error(`[clawmem:search] Hybrid search failed, falling back to FTS5: ${err.message}`);
+      console.error(`[lizardbrain:search] Hybrid search failed, falling back to FTS5: ${err.message}`);
     }
   }
 

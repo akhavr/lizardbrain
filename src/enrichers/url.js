@@ -16,7 +16,7 @@ const GITHUB_REPO_REGEX = /^https?:\/\/github\.com\/([^/]+)\/([^/\s#?]+)/;
 const DEFAULT_OPTIONS = {
   maxUrls: 10,         // max URLs to enrich per batch
   timeoutMs: 5000,     // per-URL fetch timeout
-  userAgent: 'clawmem/0.2 (link enrichment)',
+  userAgent: 'lizardbrain/0.2 (link enrichment)',
 };
 
 /**

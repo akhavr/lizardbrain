@@ -1,5 +1,5 @@
 /**
- * OpenClaw memory-recall plugin — auto-injects clawmem search results into agent context.
+ * OpenClaw memory-recall plugin — auto-injects lizardbrain search results into agent context.
  *
  * Install: copy to ~/.openclaw/extensions/memory-recall/index.ts
  * Config in openclaw.json:
@@ -13,7 +13,7 @@ const plugin = {
   id: "memory-recall",
   name: "Memory Recall",
   register(api: any) {
-    const clawmemDir = api.getConfig?.()?.clawmemDir || process.env.CLAWMEM_DIR || ".";
+    const lizardbrainDir = api.getConfig?.()?.lizardbrainDir || process.env.LIZARDBRAIN_DIR || ".";
     const maxResults = api.getConfig?.()?.maxResults ?? 5;
 
     api.on("before_prompt_build", (event: any, ctx: any) => {
@@ -31,7 +31,7 @@ const plugin = {
         if (query.length < 15) return {};
 
         const result = execSync(
-          `cd "${clawmemDir}" && node src/cli.js search "${query.replace(/"/g, '\\"')}" --json --limit ${maxResults}`,
+          `cd "${lizardbrainDir}" && node src/cli.js search "${query.replace(/"/g, '\\"')}" --json --limit ${maxResults}`,
           { timeout: 8000, encoding: "utf-8" }
         ).trim();
 

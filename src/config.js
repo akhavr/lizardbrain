@@ -1,12 +1,12 @@
 /**
- * config.js — Load clawmem configuration from file or env vars.
+ * config.js — Load lizardbrain configuration from file or env vars.
  */
 
 const fs = require('fs');
 const path = require('path');
 
 const DEFAULTS = {
-  memoryDbPath: './clawmem.db',
+  memoryDbPath: './lizardbrain.db',
   batchSize: 40,
   minMessages: 5,
   rosterPath: null,
@@ -58,7 +58,7 @@ function load(configPath) {
     fileConfig = JSON.parse(raw);
   } else {
     // Try default locations
-    for (const name of ['clawmem.json', 'clawmem.config.json']) {
+    for (const name of ['lizardbrain.json', 'lizardbrain.config.json']) {
       const p = path.join(process.cwd(), name);
       if (fs.existsSync(p)) {
         fileConfig = JSON.parse(fs.readFileSync(p, 'utf-8'));
@@ -69,24 +69,24 @@ function load(configPath) {
 
   // Merge with defaults and env vars
   const config = {
-    memoryDbPath: fileConfig.memoryDbPath || process.env.CLAWMEM_DB_PATH || DEFAULTS.memoryDbPath,
-    batchSize: fileConfig.batchSize || parseInt(process.env.CLAWMEM_BATCH_SIZE) || DEFAULTS.batchSize,
-    minMessages: fileConfig.minMessages || parseInt(process.env.CLAWMEM_MIN_MESSAGES) || DEFAULTS.minMessages,
-    rosterPath: fileConfig.rosterPath || process.env.CLAWMEM_ROSTER_PATH || DEFAULTS.rosterPath,
+    memoryDbPath: fileConfig.memoryDbPath || process.env.LIZARDBRAIN_DB_PATH || DEFAULTS.memoryDbPath,
+    batchSize: fileConfig.batchSize || parseInt(process.env.LIZARDBRAIN_BATCH_SIZE) || DEFAULTS.batchSize,
+    minMessages: fileConfig.minMessages || parseInt(process.env.LIZARDBRAIN_MIN_MESSAGES) || DEFAULTS.minMessages,
+    rosterPath: fileConfig.rosterPath || process.env.LIZARDBRAIN_ROSTER_PATH || DEFAULTS.rosterPath,
     llm: {
-      baseUrl: fileConfig.llm?.baseUrl || process.env.CLAWMEM_LLM_BASE_URL || process.env.LLM_BASE_URL || DEFAULTS.llm.baseUrl,
-      apiKey: fileConfig.llm?.apiKey || process.env.CLAWMEM_LLM_API_KEY || process.env.LLM_API_KEY || DEFAULTS.llm.apiKey,
-      model: fileConfig.llm?.model || process.env.CLAWMEM_LLM_MODEL || process.env.LLM_MODEL || DEFAULTS.llm.model,
+      baseUrl: fileConfig.llm?.baseUrl || process.env.LIZARDBRAIN_LLM_BASE_URL || process.env.LLM_BASE_URL || DEFAULTS.llm.baseUrl,
+      apiKey: fileConfig.llm?.apiKey || process.env.LIZARDBRAIN_LLM_API_KEY || process.env.LLM_API_KEY || DEFAULTS.llm.apiKey,
+      model: fileConfig.llm?.model || process.env.LIZARDBRAIN_LLM_MODEL || process.env.LLM_MODEL || DEFAULTS.llm.model,
       promptTemplate: fileConfig.llm?.promptTemplate || DEFAULTS.llm.promptTemplate,
     },
     source: fileConfig.source || DEFAULTS.source,
     embedding: {
       enabled: fileConfig.embedding?.enabled || false,
-      baseUrl: fileConfig.embedding?.baseUrl || process.env.CLAWMEM_EMBEDDING_BASE_URL || DEFAULTS.embedding.baseUrl,
-      apiKey: fileConfig.embedding?.apiKey || process.env.CLAWMEM_EMBEDDING_API_KEY || DEFAULTS.embedding.apiKey,
-      model: fileConfig.embedding?.model || process.env.CLAWMEM_EMBEDDING_MODEL || DEFAULTS.embedding.model,
+      baseUrl: fileConfig.embedding?.baseUrl || process.env.LIZARDBRAIN_EMBEDDING_BASE_URL || DEFAULTS.embedding.baseUrl,
+      apiKey: fileConfig.embedding?.apiKey || process.env.LIZARDBRAIN_EMBEDDING_API_KEY || DEFAULTS.embedding.apiKey,
+      model: fileConfig.embedding?.model || process.env.LIZARDBRAIN_EMBEDDING_MODEL || DEFAULTS.embedding.model,
       dimensions: fileConfig.embedding?.dimensions || DEFAULTS.embedding.dimensions,
-      batchTokenLimit: fileConfig.embedding?.batchTokenLimit || parseInt(process.env.CLAWMEM_EMBEDDING_BATCH_LIMIT) || DEFAULTS.embedding.batchTokenLimit,
+      batchTokenLimit: fileConfig.embedding?.batchTokenLimit || parseInt(process.env.LIZARDBRAIN_EMBEDDING_BATCH_LIMIT) || DEFAULTS.embedding.batchTokenLimit,
     },
   };
 

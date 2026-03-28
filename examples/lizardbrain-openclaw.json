@@ -1,5 +1,5 @@
 {
-  "memoryDbPath": "./clawmem.db",
+  "memoryDbPath": "./lizardbrain.db",
   "rosterPath": "../MEMBERS.md",
 
   "llm": {

@@ -1,5 +1,5 @@
 {
-  "memoryDbPath": "./clawmem.db",
+  "memoryDbPath": "./lizardbrain.db",
   "batchSize": 40,
   "minMessages": 5,
 

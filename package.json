@@ -1,10 +1,10 @@
 {
-  "name": "clawmem",
+  "name": "lizardbrain",
   "version": "0.3.0",
   "description": "Lightweight structured memory extraction for community chats. Hybrid search, model-agnostic.",
   "main": "src/index.js",
   "bin": {
-    "clawmem": "src/cli.js"
+    "lizardbrain": "src/cli.js"
   },
   "scripts": {
     "init": "node src/cli.js init",
@@ -29,7 +29,7 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "https://github.com/pandore/clawmem"
+    "url": "https://github.com/pandore/lizardbrain"
   },
   "engines": {
     "node": ">=18.0.0"
