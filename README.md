@@ -82,6 +82,19 @@ Depending on your profile, Lizardbrain pulls out up to 7 types of structured kno
 
 Everything is deduplicated automatically -- if the LLM extracts the same fact twice (even rephrased), Lizardbrain catches it.
 
+### Entity updates
+
+Decisions, tasks, and questions evolve over time. A decision starts as "proposed" and becomes "agreed." A task goes from "open" to "done." A question gets answered.
+
+Lizardbrain handles this automatically when context injection is enabled. The LLM sees existing open entities and can update their status instead of creating duplicates:
+
+```
+Run 1: Decision extracted — "Use PostgreSQL" (proposed)
+Run 2: LLM sees the decision in context, messages confirm it → status updated to "agreed"
+```
+
+No manual intervention needed. The LLM references entity IDs from context and outputs updates alongside new extractions.
+
 ---
 
 ## Why Lizardbrain?
@@ -93,6 +106,8 @@ Everything is deduplicated automatically -- if the LLM extracts the same fact tw
 **Scales up when you want.** Add `better-sqlite3` + `sqlite-vec` for hybrid vector search that combines keyword matching with semantic similarity via Reciprocal Rank Fusion.
 
 **Runs incrementally.** Tracks where it left off. Each run only processes new messages, so it's cheap and fast even on large chats.
+
+**Context-aware.** The LLM sees existing knowledge from previous runs. Decisions get confirmed, tasks get closed, questions get answered -- entities evolve naturally across extraction runs.
 
 **Links get context.** When someone shares a GitHub repo or web page, Lizardbrain fetches metadata (stars, descriptions, titles) before sending to the LLM, so extracted facts are richer.
 
@@ -129,6 +144,63 @@ Create `lizardbrain.json` in your working directory:
 ```
 
 API key via `.env` file, environment variable (`LIZARDBRAIN_LLM_API_KEY`), or directly in config.
+
+<details>
+<summary>Batch overlap (split conversation fix)</summary>
+
+When a discussion spans two batches (e.g., messages 35-45 with batchSize=40), the LLM sees half in each batch with no continuity. Batch overlap fixes this by including trailing messages from the previous batch as read-only context:
+
+```json
+{
+  "batchOverlap": 5
+}
+```
+
+With `batchSize: 40` and `batchOverlap: 5`:
+- Batch 1: messages 1-40
+- Batch 2: messages 36-75 (36-40 included as context, extraction starts at 41)
+- Batch 3: messages 71-100
+
+Overlap messages are clearly marked in the LLM prompt as "already processed — do NOT extract from these." Dedup catches any accidental re-extraction as a safety net.
+
+Default: `0` (no overlap, identical to v0.4 behavior).
+
+</details>
+
+<details>
+<summary>Context injection (cross-run awareness)</summary>
+
+Without context, each extraction run is stateless — the LLM doesn't know about decisions, tasks, or questions from previous runs. Enable context injection to fix this:
+
+```json
+{
+  "context": {
+    "enabled": true,
+    "tokenBudget": 500,
+    "recencyDays": 30,
+    "maxItems": {
+      "decisions": 5,
+      "tasks": 10,
+      "questions": 5,
+      "facts": 5,
+      "topics": 3
+    }
+  }
+}
+```
+
+Before the extraction loop, Lizardbrain queries the DB for recent and active entities (open decisions, pending tasks, unanswered questions) and includes them in every LLM prompt. The LLM can then output updates to existing entities alongside new ones.
+
+| Option | Default | Description |
+|--------|---------|-------------|
+| `enabled` | `false` | Enable context injection |
+| `tokenBudget` | `500` | Max tokens (~2000 chars) for context section |
+| `recencyDays` | `30` | How far back to look for recent entities |
+| `maxItems` | see above | Max items per entity type in context |
+
+Default: disabled (identical to v0.4 behavior). Both features are fully backward compatible.
+
+</details>
 
 ### LLM providers
 
