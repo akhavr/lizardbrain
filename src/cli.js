@@ -497,6 +497,8 @@ function createAdapter(sourceConfig) {
       return lizardbrain.adapters.sqlite.create(sourceConfig);
     case 'jsonl':
       return lizardbrain.adapters.jsonl.create(sourceConfig);
+    case 'stdin':
+      return lizardbrain.adapters.stdin.create(sourceConfig);
     case 'custom':
       if (sourceConfig.adapterPath) {
         const custom = require(path.resolve(sourceConfig.adapterPath));
@@ -504,7 +506,7 @@ function createAdapter(sourceConfig) {
       }
       throw new Error('Custom adapter requires "adapterPath" in source config');
     default:
-      throw new Error(`Unknown adapter type: ${type}. Use sqlite, jsonl, or custom.`);
+      throw new Error(`Unknown adapter type: ${type}. Use sqlite, jsonl, stdin, or custom.`);
   }
 }
 

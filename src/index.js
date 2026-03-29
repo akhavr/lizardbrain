@@ -37,6 +37,7 @@ const config = require('./config');
 const profiles = require('./profiles');
 const sqliteAdapter = require('./adapters/sqlite');
 const jsonlAdapter = require('./adapters/jsonl');
+const stdinAdapter = require('./adapters/stdin');
 const urlEnricher = require('./enrichers/url');
 const { createDriver, dbExists, esc } = require('./driver');
 const search = require('./search');
@@ -100,5 +101,6 @@ module.exports = {
   adapters: {
     sqlite: sqliteAdapter,
     jsonl: jsonlAdapter,
+    stdin: stdinAdapter,
   },
 };

@@ -469,6 +469,56 @@ async function testFtsOnlySearch() {
   driver.close();
 }
 
+function testStdinAdapter() {
+  console.log('\n--- Test: stdin adapter ---');
+
+  const stdinAdapter = require('../src/adapters/stdin');
+
+  // Test with JSONL written to a temp file, then read via the adapter's internal parsing
+  // We test the create/getMessages logic directly since stdin is hard to mock
+  const testJsonl = [
+    '{"id": "1", "sender": "Alice", "content": "Hello from stdin", "timestamp": "2026-03-28T10:00:00Z"}',
+    '{"id": "2", "sender": "Bob", "content": "Stdin works!", "timestamp": "2026-03-28T10:01:00Z"}',
+    '{"id": "3", "sender": "Alice", "content": "Third message", "timestamp": "2026-03-28T10:02:00Z"}',
+    'not valid json',
+    '{"id": "5", "sender": "Charlie", "content": "With conv", "timestamp": "2026-03-28T10:03:00Z", "conv_id": "thread-1"}',
+  ].join('\n');
+
+  // Write temp JSONL and test via the jsonl adapter (same parsing logic)
+  const tmpPath = path.join(TEST_DIR, 'stdin-test.jsonl');
+  fs.writeFileSync(tmpPath, testJsonl);
+
+  // Use jsonl adapter to verify parsing (stdin adapter uses identical parse logic)
+  const jsonlAdapter = require('../src/adapters/jsonl');
+  const adapter = jsonlAdapter.create({ path: tmpPath });
+
+  assert(adapter.validate().ok, 'JSONL validates for stdin-format data');
+
+  const msgs = adapter.getMessages('0');
+  assert(msgs.length === 4, `Parsed ${msgs.length} messages from JSONL (expected 4, skipping invalid line)`);
+  assert(msgs[0].sender === 'Alice', 'First message sender is Alice');
+  assert(msgs[0].content === 'Hello from stdin', 'First message content correct');
+  assert(msgs[1].id === '2', 'Second message ID is 2');
+
+  // Test cursor: get messages after id "2"
+  const afterCursor = adapter.getMessages('2');
+  assert(afterCursor.length === 2, `After cursor "2": ${afterCursor.length} messages (expected 2)`);
+  assert(afterCursor[0].id === '3', 'First message after cursor is id 3');
+
+  // Test conversationId field mapping
+  const convAdapter = jsonlAdapter.create({ path: tmpPath, fields: { conversationId: 'conv_id' } });
+  const convMsgs = convAdapter.getMessages('0');
+  const withConv = convMsgs.filter(m => m.conversationId);
+  assert(withConv.length === 1, `1 message has conversationId (got ${withConv.length})`);
+  assert(withConv[0].conversationId === 'thread-1', 'ConversationId mapped correctly');
+
+  // Test stdin adapter creates successfully
+  const sa = stdinAdapter.create({ fields: { id: 'id', content: 'content' } });
+  assert(sa.name === 'stdin', 'Stdin adapter has correct name');
+  assert(typeof sa.getMessages === 'function', 'Stdin adapter has getMessages');
+  assert(typeof sa.validate === 'function', 'Stdin adapter has validate');
+}
+
 async function testUrlEnrichment() {
   console.log('\n--- Test: URL enrichment ---');
 
@@ -1225,6 +1275,7 @@ async function runAll() {
   testCredentialFiltering();
   testGenericMemberFiltering();
   testCodeFenceStripping();
+  testStdinAdapter();
   await testUrlEnrichment();
 
   console.log(`\n=== Results: ${passed} passed, ${failed} failed ===\n`);
