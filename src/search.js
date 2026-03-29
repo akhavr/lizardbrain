@@ -4,7 +4,7 @@
  * Falls back to FTS5-only when vectors aren't available.
  */
 
-const { esc } = require('./driver');
+const { esc, sanitizeFtsQuery } = require('./driver');
 
 /**
  * Merge multiple ranked result sets using Reciprocal Rank Fusion.
@@ -47,7 +47,7 @@ function mergeRRF(resultSets, K = 60) {
  * @returns {Array<{key: string, data: object}>}
  */
 function ftsSearch(driver, query, limit) {
-  const escapedQuery = esc(query);
+  const escapedQuery = esc(sanitizeFtsQuery(query));
   const results = [];
 
   // Search facts_fts

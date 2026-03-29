@@ -1,11 +1,24 @@
 /**
  * OpenClaw memory-recall plugin — auto-injects lizardbrain search results into agent context.
  *
+ * Uses the programmatic API (require('lizardbrain')) instead of shelling out.
+ * Requires: npm install lizardbrain
+ *
  * Install: copy to ~/.openclaw/extensions/memory-recall/index.ts
  * Config in openclaw.json:
  *   { "plugins": { "entries": { "memory-recall": { "enabled": true } } } }
+ *
+ * Recommended integration pattern (two layers):
+ *   1. STATIC (refreshed daily): inject `lizardbrain roster` into system prompt
+ *      Example:
+ *        const lizardbrain = require('lizardbrain');
+ *        const driver = lizardbrain.createDriver(dbPath);
+ *        const roster = lizardbrain.query.generateRoster(driver);
+ *        // inject roster.content into system prompt
+ *
+ *   2. DYNAMIC (per-turn, this plugin): inject `lizardbrain search` results
+ *      → gives agent contextual facts relevant to the current conversation
  */
-import { execSync } from "child_process";
 
 const SKIP = [/^.{0,15}$/, /^(hi|hey|gm|gn|ok|lol|haha|thanks|wow)$/i];
 
@@ -13,10 +26,24 @@ const plugin = {
   id: "memory-recall",
   name: "Memory Recall",
   register(api: any) {
-    const lizardbrainDir = api.getConfig?.()?.lizardbrainDir || process.env.LIZARDBRAIN_DIR || ".";
+    const dbPath = api.getConfig?.()?.lizardbrainDbPath || process.env.LIZARDBRAIN_DB_PATH || "./lizardbrain.db";
     const maxResults = api.getConfig?.()?.maxResults ?? 5;
 
-    api.on("before_prompt_build", (event: any, ctx: any) => {
+    // Lazy-load lizardbrain to avoid startup penalty when plugin is disabled
+    let lb: any = null;
+    let driver: any = null;
+
+    function getDriver() {
+      if (!driver) {
+        lb = require("lizardbrain");
+        if (!lb.dbExists(dbPath)) return null;
+        driver = lb.createDriver(dbPath);
+        lb.migrate(driver);
+      }
+      return driver;
+    }
+
+    api.on("before_prompt_build", async (event: any, ctx: any) => {
       try {
         if (ctx.chatType === "direct" || ctx.chatType === "dm") return {};
         const messages = event.messages || [];
@@ -25,20 +52,18 @@ const plugin = {
 
         const text = typeof last.content === "string" ? last.content
           : last.content?.filter((b: any) => b.type === "text").map((b: any) => b.text).join(" ") || "";
-        if (text.length < 20 || SKIP.some(p => p.test(text))) return {};
+        if (text.length < 20 || SKIP.some((p: RegExp) => p.test(text))) return {};
 
         const query = text.replace(/https?:\/\/\S+/g, "").replace(/@\w+/g, "").trim().slice(0, 200);
         if (query.length < 15) return {};
 
-        const result = execSync(
-          `cd "${lizardbrainDir}" && node src/cli.js search "${query.replace(/"/g, '\\"')}" --json --limit ${maxResults}`,
-          { timeout: 8000, encoding: "utf-8" }
-        ).trim();
+        const drv = getDriver();
+        if (!drv) return {};
 
-        const parsed = JSON.parse(result);
-        if (!parsed.results?.length) return {};
+        const result = await lb.search(drv, query, { limit: maxResults });
+        if (!result.results?.length) return {};
 
-        const formatted = parsed.results
+        const formatted = result.results
           .map((r: any) => `- [${r.source}] ${(r.text || "").slice(0, 300)}`)
           .join("\n");
 

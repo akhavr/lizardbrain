@@ -69,6 +69,8 @@ async function main() {
         rosterPath: rosterOutput,
         enrichUrls: !flag('no-enrich'),
         noEmbed: flag('no-embed'),
+        limit: flagValue('limit') ? parseInt(flagValue('limit')) : null,
+        from: flagValue('from') || null,
       });
 
       driver.close();
@@ -252,17 +254,186 @@ async function main() {
       break;
     }
 
+    case 'health': {
+      const health = { healthy: true, issues: [] };
+
+      // DB check (read-only — no migrate)
+      if (dbExists(cfg.memoryDbPath)) {
+        let driver;
+        try {
+          driver = createDriver(cfg.memoryDbPath);
+
+          const fs = require('fs');
+          const dbStat = fs.statSync(cfg.memoryDbPath);
+          const store = require('./store');
+          const stats = store.getStats(driver);
+          const state = store.getState(driver);
+
+          // Schema version
+          const versionRow = driver.read("SELECT value FROM lizardbrain_meta WHERE key = 'schema_version'");
+          const schemaVersion = versionRow[0]?.value || 'unknown';
+
+          health.db = {
+            path: cfg.memoryDbPath,
+            sizeBytes: dbStat.size,
+            schemaVersion,
+            profile: stats.profile,
+            driver: stats.driver,
+            vectors: stats.vectors,
+            entities: {
+              members: stats.members,
+              facts: stats.facts,
+              topics: stats.topics,
+              decisions: stats.decisions,
+              tasks: stats.tasks,
+              questions: stats.questions,
+              events: stats.events,
+            },
+          };
+
+          health.extraction = {
+            lastProcessedId: state?.last_processed_id || '0',
+            lastRunAt: state?.last_run_at || null,
+            totalMessagesProcessed: parseInt(state?.total_messages_processed) || 0,
+          };
+
+          // Stale cursor check (no run in 48 hours)
+          if (state?.last_run_at) {
+            const lastRun = new Date(state.last_run_at);
+            const hoursSinceRun = (Date.now() - lastRun.getTime()) / (1000 * 60 * 60);
+            if (hoursSinceRun > 48) {
+              health.issues.push(`Extraction stale: last run ${Math.round(hoursSinceRun)}h ago`);
+            }
+          }
+        } catch (err) {
+          health.healthy = false;
+          health.issues.push(`DB error: ${err.message}`);
+        } finally {
+          if (driver) driver.close();
+        }
+      } else {
+        health.healthy = false;
+        health.db = null;
+        health.issues.push('Database not found');
+      }
+
+      // LLM connectivity
+      if (cfg.llm?.baseUrl && cfg.llm?.apiKey) {
+        try {
+          const url = cfg.llm.baseUrl.replace(/\/+$/, '') + '/models';
+          const res = await fetch(url, {
+            headers: { 'Authorization': `Bearer ${cfg.llm.apiKey}` },
+            signal: AbortSignal.timeout(5000),
+          });
+          health.llm = { reachable: res.ok, status: res.status };
+          if (!res.ok) health.issues.push(`LLM endpoint returned ${res.status}`);
+        } catch (err) {
+          health.llm = { reachable: false, error: err.message };
+          health.issues.push(`LLM unreachable: ${err.message}`);
+        }
+      } else {
+        health.llm = { configured: false };
+      }
+
+      // Embedding connectivity
+      if (cfg.embedding?.enabled && cfg.embedding?.baseUrl && cfg.embedding?.apiKey) {
+        try {
+          const url = cfg.embedding.baseUrl.replace(/\/+$/, '') + '/models';
+          const res = await fetch(url, {
+            headers: { 'Authorization': `Bearer ${cfg.embedding.apiKey}` },
+            signal: AbortSignal.timeout(5000),
+          });
+          health.embedding = { reachable: res.ok, status: res.status };
+          if (!res.ok) health.issues.push(`Embedding endpoint returned ${res.status}`);
+        } catch (err) {
+          health.embedding = { reachable: false, error: err.message };
+          health.issues.push(`Embedding unreachable: ${err.message}`);
+        }
+      } else {
+        health.embedding = { configured: false };
+      }
+
+      if (health.issues.length > 0) health.healthy = false;
+
+      if (flag('json') || !process.stdout.isTTY) {
+        console.log(JSON.stringify(health, null, 2));
+      } else {
+        console.log(`\n=== lizardbrain health ===`);
+        console.log(`Status: ${health.healthy ? 'HEALTHY' : 'UNHEALTHY'}`);
+        if (health.db) {
+          console.log(`\nDatabase: ${health.db.path} (${(health.db.sizeBytes / 1024).toFixed(0)} KB)`);
+          console.log(`  Schema: v${health.db.schemaVersion} | Profile: ${health.db.profile} | Driver: ${health.db.driver}`);
+          const e = health.db.entities;
+          console.log(`  Entities: ${e.members} members, ${e.facts} facts, ${e.topics} topics, ${e.decisions} decisions, ${e.tasks} tasks`);
+          console.log(`  Extraction: cursor=${health.extraction.lastProcessedId}, last run=${health.extraction.lastRunAt || 'never'}, ${health.extraction.totalMessagesProcessed} messages`);
+        }
+        console.log(`  LLM: ${health.llm?.reachable ? 'reachable' : health.llm?.configured === false ? 'not configured' : 'unreachable'}`);
+        console.log(`  Embedding: ${health.embedding?.reachable ? 'reachable' : health.embedding?.configured === false ? 'not configured' : 'unreachable'}`);
+        if (health.issues.length > 0) {
+          console.log(`\nIssues:`);
+          for (const issue of health.issues) console.log(`  - ${issue}`);
+        }
+        console.log('');
+      }
+
+      process.exit(health.healthy ? 0 : 1);
+      break;
+    }
+
+    case 'prune-embeddings': {
+      if (!dbExists(cfg.memoryDbPath)) {
+        console.log('Memory database not found. Run `lizardbrain init` first.');
+        process.exit(1);
+      }
+      const driver = createDriver(cfg.memoryDbPath);
+      migrate(driver);
+      if (!driver.capabilities.vectors) {
+        console.log('Vector search requires better-sqlite3 + sqlite-vec.');
+        driver.close();
+        process.exit(1);
+      }
+      const embeddings = require('./embeddings');
+      const result = embeddings.prune(driver, {
+        orphaned: flag('orphaned'),
+        stale: flag('stale'),
+        model: flagValue('model') || null,
+      });
+      console.log(`Pruned ${result.totalPruned} embedding(s)`);
+      driver.close();
+      break;
+    }
+
+    case 'reset-cursor': {
+      if (!dbExists(cfg.memoryDbPath)) {
+        console.log('Memory database not found. Run `lizardbrain init` first.');
+        process.exit(1);
+      }
+      const driver = createDriver(cfg.memoryDbPath);
+      migrate(driver);
+      const targetId = flagValue('to') || '0';
+      const store = require('./store');
+      const before = store.getState(driver);
+      store.setCursor(driver, targetId);
+      console.log(`Cursor reset: ${before?.last_processed_id || '0'} → ${targetId}`);
+      driver.close();
+      break;
+    }
+
     default:
       console.log(`lizardbrain — Persistent memory for group chats
 
 Commands:
-  init [--force] [--profile <name>] Create memory database
-  extract [--dry-run] [--reprocess] Run extraction pipeline
-  embed [--stats] [--rebuild]       Manage vector embeddings
-  stats                             Show database statistics
+  init [--force] [--profile <name>]   Create memory database
+  extract [--dry-run] [--reprocess]   Run extraction pipeline
+    [--limit N] [--from <id>]
+  embed [--stats] [--rebuild]         Manage vector embeddings
+  stats                               Show database statistics
+  health [--json]                     Check system health
   search <query> [--json] [--fts-only] [--limit N]  Search knowledge
-  who <keyword>                     Find members by expertise
-  roster [--output path]            Generate member roster
+  who <keyword>                       Find members by expertise
+  roster [--output path]              Generate member roster
+  reset-cursor [--to <id>]            Reset extraction cursor
+  prune-embeddings [--orphaned] [--stale] [--model <name>]  Clean up embeddings
 
 Profiles:
   knowledge  Community, interest group (members, facts, topics)
@@ -278,6 +449,10 @@ Options:
   --no-enrich                       Skip URL metadata enrichment
   --no-embed                        Skip auto-embedding after extraction
 
+Context injection:
+  Configure in lizardbrain.json: "context": { "enabled": true, "tokenBudget": 500 }
+  tokenBudget controls how much existing knowledge is injected into the LLM prompt.
+
 Environment variables:
   LIZARDBRAIN_DB_PATH               Path to memory database
   LIZARDBRAIN_PROFILE               Extraction profile
@@ -287,6 +462,7 @@ Environment variables:
   LIZARDBRAIN_EMBEDDING_BASE_URL    Embedding API base URL
   LIZARDBRAIN_EMBEDDING_API_KEY     Embedding API key
   LIZARDBRAIN_EMBEDDING_MODEL       Embedding model name
+  LIZARDBRAIN_SOURCE_AGENT          Source agent identifier (multi-agent)
 `);
   }
 }

@@ -29,6 +29,7 @@ CREATE TABLE IF NOT EXISTS facts (
   tags TEXT DEFAULT '',
   confidence REAL DEFAULT 0.8,
   message_date TEXT,
+  source_agent TEXT DEFAULT NULL,
   created_at TEXT DEFAULT (datetime('now'))
 );
 
@@ -116,6 +117,7 @@ CREATE TABLE IF NOT EXISTS decisions (
   status TEXT DEFAULT 'proposed',
   tags TEXT DEFAULT '',
   message_date TEXT,
+  source_agent TEXT DEFAULT NULL,
   created_at TEXT DEFAULT (datetime('now')),
   updated_at TEXT
 );
@@ -130,6 +132,7 @@ CREATE TABLE IF NOT EXISTS tasks (
   source_member_id INTEGER REFERENCES members(id),
   tags TEXT DEFAULT '',
   message_date TEXT,
+  source_agent TEXT DEFAULT NULL,
   created_at TEXT DEFAULT (datetime('now')),
   updated_at TEXT
 );
@@ -271,6 +274,15 @@ CREATE TABLE IF NOT EXISTS lizardbrain_meta (
   value TEXT,
   updated_at TEXT DEFAULT (datetime('now'))
 );
+
+-- Embedding metadata (model_id tracking, separate from vec0 tables)
+CREATE TABLE IF NOT EXISTS embedding_metadata (
+  entity_type TEXT NOT NULL,
+  entity_id INTEGER NOT NULL,
+  model_id TEXT NOT NULL,
+  embedded_at TEXT DEFAULT (datetime('now')),
+  PRIMARY KEY (entity_type, entity_id)
+);
 `;
 
 function init(dbPath, { force = false, profile = 'knowledge' } = {}) {
@@ -293,7 +305,7 @@ function init(dbPath, { force = false, profile = 'knowledge' } = {}) {
   const { esc } = require('./driver');
   driver.write(`INSERT OR REPLACE INTO lizardbrain_meta (key, value, updated_at) VALUES ('profile_name', '${esc(profile)}', datetime('now'));`);
   driver.write(`INSERT OR REPLACE INTO lizardbrain_meta (key, value, updated_at) VALUES ('profile_entities', '${esc(profileConfig.entities.join(','))}', datetime('now'));`);
-  driver.write(`INSERT OR REPLACE INTO lizardbrain_meta (key, value, updated_at) VALUES ('schema_version', '0.5', datetime('now'));`);
+  driver.write(`INSERT OR REPLACE INTO lizardbrain_meta (key, value, updated_at) VALUES ('schema_version', '0.6', datetime('now'));`);
 
   driver.close();
 
@@ -310,7 +322,7 @@ function migrate(driver) {
   // Check current schema version
   const meta = driver.read("SELECT value FROM lizardbrain_meta WHERE key = 'schema_version'");
   const version = meta[0]?.value;
-  if (version >= '0.5') return { migrated: false, message: 'Already at v0.5' };
+  if (version >= '0.6') return { migrated: false, message: 'Already at v0.6' };
 
   // Create new tables (IF NOT EXISTS makes this idempotent)
   const newTables = `
@@ -424,7 +436,26 @@ function migrate(driver) {
 
   driver.write("INSERT OR REPLACE INTO lizardbrain_meta (key, value, updated_at) VALUES ('schema_version', '0.5', datetime('now'));");
 
-  return { migrated: true, message: 'Migrated to v0.5 schema' };
+  // v0.6 migration: source_agent on facts/decisions/tasks, embedding_metadata table
+  for (const table of ['facts', 'decisions', 'tasks']) {
+    try { driver.write(`ALTER TABLE ${table} ADD COLUMN source_agent TEXT DEFAULT NULL;`); }
+    catch (e) { /* column already exists */ }
+  }
+
+  // embedding_metadata table for model_id tracking (vec0 doesn't support extra columns)
+  driver.write(`
+    CREATE TABLE IF NOT EXISTS embedding_metadata (
+      entity_type TEXT NOT NULL,
+      entity_id INTEGER NOT NULL,
+      model_id TEXT NOT NULL,
+      embedded_at TEXT DEFAULT (datetime('now')),
+      PRIMARY KEY (entity_type, entity_id)
+    );
+  `);
+
+  driver.write("INSERT OR REPLACE INTO lizardbrain_meta (key, value, updated_at) VALUES ('schema_version', '0.6', datetime('now'));");
+
+  return { migrated: true, message: 'Migrated to v0.6 schema' };
 }
 
 module.exports = { init, migrate, SCHEMA_SQL };

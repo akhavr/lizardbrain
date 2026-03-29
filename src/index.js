@@ -78,6 +78,7 @@ module.exports = {
     updateQuestionAnswer: store.updateQuestionAnswer,
     getActiveContext: store.getActiveContext,
     formatContext: store.formatContext,
+    setCursor: store.setCursor,
   },
 
   // Search (hybrid FTS5 + kNN + RRF)

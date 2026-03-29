@@ -1,0 +1,22 @@
+{
+  "id": "memory-recall",
+  "name": "Memory Recall",
+  "version": "0.6.0",
+  "description": "Auto-injects lizardbrain search results into agent context for community knowledge recall.",
+  "entry": "openclaw-plugin.ts",
+  "config": {
+    "lizardbrainDbPath": {
+      "type": "string",
+      "description": "Path to the lizardbrain.db database file",
+      "default": "./lizardbrain.db"
+    },
+    "maxResults": {
+      "type": "number",
+      "description": "Maximum number of search results to inject",
+      "default": 5
+    }
+  },
+  "dependencies": {
+    "lizardbrain": ">=0.6.0"
+  }
+}

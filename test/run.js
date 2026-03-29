@@ -712,7 +712,7 @@ function testMigration() {
 
   // Verify schema version set
   const version = driver.read("SELECT value FROM lizardbrain_meta WHERE key = 'schema_version'");
-  assert(version[0]?.value === '0.5', 'Schema version set to 0.5');
+  assert(version[0]?.value === '0.6', 'Schema version set to 0.6');
 
   // Idempotent: running again should be a no-op
   const result2 = migrate(driver);
@@ -1046,7 +1046,7 @@ function testMigrationV05() {
 
   // Verify schema version
   const version = driver.read("SELECT value FROM lizardbrain_meta WHERE key = 'schema_version'");
-  assert(version[0]?.value === '0.5', 'Schema version updated to 0.5');
+  assert(version[0]?.value === '0.6', 'Schema version updated to 0.6');
 
   // Idempotent
   const result2 = migrate(driver);

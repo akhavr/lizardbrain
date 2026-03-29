@@ -230,6 +230,15 @@ function getEmbeddingStats(driver) {
   const questionsEmbedded = count('questions_vec');
   const eventsEmbedded = count('events_vec');
 
+  // Per-model counts from embedding_metadata (if table exists)
+  let modelCounts = [];
+  const metaRows = driver.read(
+    `SELECT model_id, COUNT(*) as c FROM embedding_metadata GROUP BY model_id`
+  );
+  if (metaRows.length > 0) {
+    modelCounts = metaRows.map(r => ({ model: r.model_id, count: parseInt(r.c) || 0 }));
+  }
+
   return {
     model,
     dimensions: dimensions ? parseInt(dimensions) : null,
@@ -240,6 +249,7 @@ function getEmbeddingStats(driver) {
     tasks: { total: tasksTotal, embedded: tasksEmbedded },
     questions: { total: questionsTotal, embedded: questionsEmbedded },
     events: { total: eventsTotal, embedded: eventsEmbedded },
+    modelCounts,
   };
 }
 
@@ -314,6 +324,16 @@ async function backfill(driver, config, options = {}) {
   const batchTokenLimit = options.batchTokenLimit || config.batchTokenLimit || 8000;
   let totalEmbedded = 0;
 
+  // Prepare embedding_metadata insert (if table exists)
+  let metaStmt = null;
+  try {
+    metaStmt = driver._db.prepare(
+      'INSERT OR REPLACE INTO embedding_metadata (entity_type, entity_id, model_id, embedded_at) VALUES (?, ?, ?, datetime(\'now\'))'
+    );
+  } catch (_) {
+    // Table may not exist on older schemas — skip metadata tracking
+  }
+
   // --- Embed facts ---
   {
     const rows = driver.read(
@@ -336,6 +356,7 @@ async function backfill(driver, config, options = {}) {
           for (let i = 0; i < batch.length; i++) {
             const row = rows[offset + i];
             insertStmt.run(row.id, new Float32Array(result.embeddings[i]));
+            if (metaStmt) metaStmt.run('fact', row.id, config.model);
           }
         });
         offset += batch.length;
@@ -366,6 +387,7 @@ async function backfill(driver, config, options = {}) {
           for (let i = 0; i < batch.length; i++) {
             const row = rows[offset + i];
             insertStmt.run(row.id, new Float32Array(result.embeddings[i]));
+            if (metaStmt) metaStmt.run('topic', row.id, config.model);
           }
         });
         offset += batch.length;
@@ -398,6 +420,7 @@ async function backfill(driver, config, options = {}) {
           for (let i = 0; i < batch.length; i++) {
             const row = rows[offset + i];
             insertStmt.run(row.id, new Float32Array(result.embeddings[i]));
+            if (metaStmt) metaStmt.run('member', row.id, config.model);
           }
         });
         offset += batch.length;
@@ -430,6 +453,7 @@ async function backfill(driver, config, options = {}) {
           for (let i = 0; i < batch.length; i++) {
             const row = rows[offset + i];
             insertStmt.run(row.id, new Float32Array(result.embeddings[i]));
+            if (metaStmt) metaStmt.run('decision', row.id, config.model);
           }
         });
         offset += batch.length;
@@ -462,6 +486,7 @@ async function backfill(driver, config, options = {}) {
           for (let i = 0; i < batch.length; i++) {
             const row = rows[offset + i];
             insertStmt.run(row.id, new Float32Array(result.embeddings[i]));
+            if (metaStmt) metaStmt.run('task', row.id, config.model);
           }
         });
         offset += batch.length;
@@ -494,6 +519,7 @@ async function backfill(driver, config, options = {}) {
           for (let i = 0; i < batch.length; i++) {
             const row = rows[offset + i];
             insertStmt.run(row.id, new Float32Array(result.embeddings[i]));
+            if (metaStmt) metaStmt.run('question', row.id, config.model);
           }
         });
         offset += batch.length;
@@ -526,6 +552,7 @@ async function backfill(driver, config, options = {}) {
           for (let i = 0; i < batch.length; i++) {
             const row = rows[offset + i];
             insertStmt.run(row.id, new Float32Array(result.embeddings[i]));
+            if (metaStmt) metaStmt.run('event', row.id, config.model);
           }
         });
         offset += batch.length;
@@ -535,6 +562,79 @@ async function backfill(driver, config, options = {}) {
   }
 
   return { ok: true, totalEmbedded };
+}
+
+/**
+ * Prune orphaned, stale, or model-specific embeddings.
+ */
+function prune(driver, options = {}) {
+  const { orphaned = false, stale = false, model = null } = options;
+  let totalPruned = 0;
+
+  const entityMap = [
+    { type: 'fact', vecTable: 'facts_vec', idCol: 'fact_id', parentTable: 'facts' },
+    { type: 'topic', vecTable: 'topics_vec', idCol: 'topic_id', parentTable: 'topics' },
+    { type: 'member', vecTable: 'members_vec', idCol: 'member_id', parentTable: 'members' },
+    { type: 'decision', vecTable: 'decisions_vec', idCol: 'decision_id', parentTable: 'decisions' },
+    { type: 'task', vecTable: 'tasks_vec', idCol: 'task_id', parentTable: 'tasks' },
+    { type: 'question', vecTable: 'questions_vec', idCol: 'question_id', parentTable: 'questions' },
+    { type: 'event', vecTable: 'events_vec', idCol: 'event_id', parentTable: 'events' },
+  ];
+
+  if (orphaned) {
+    for (const { type, vecTable, idCol, parentTable } of entityMap) {
+      try {
+        const orphans = driver.read(
+          `SELECT v.${idCol} FROM ${vecTable} v LEFT JOIN ${parentTable} p ON v.${idCol} = p.id WHERE p.id IS NULL`
+        );
+        for (const row of orphans) {
+          driver._db.prepare(`DELETE FROM ${vecTable} WHERE ${idCol} = ?`).run(row[idCol]);
+          driver.write(`DELETE FROM embedding_metadata WHERE entity_type = '${type}' AND entity_id = ${row[idCol]}`);
+          totalPruned++;
+        }
+      } catch (_) {
+        // vec table may not exist
+      }
+    }
+  }
+
+  if (stale) {
+    for (const { type, vecTable, idCol, parentTable } of entityMap) {
+      try {
+        const staleRows = driver.read(
+          `SELECT em.entity_id FROM embedding_metadata em JOIN ${parentTable} p ON em.entity_id = p.id WHERE em.entity_type = '${type}' AND p.updated_at IS NOT NULL AND em.embedded_at < p.updated_at`
+        );
+        for (const row of staleRows) {
+          try {
+            driver._db.prepare(`DELETE FROM ${vecTable} WHERE ${idCol} = ?`).run(row.entity_id);
+          } catch (_) { /* vec table may not exist */ }
+          driver.write(`DELETE FROM embedding_metadata WHERE entity_type = '${type}' AND entity_id = ${row.entity_id}`);
+          totalPruned++;
+        }
+      } catch (_) {
+        // table may not have updated_at
+      }
+    }
+  }
+
+  if (model) {
+    const { esc } = require('./driver');
+    const metaRows = driver.read(
+      `SELECT entity_type, entity_id FROM embedding_metadata WHERE model_id = '${esc(model)}'`
+    );
+    for (const row of metaRows) {
+      const entry = entityMap.find(e => e.type === row.entity_type);
+      if (entry) {
+        try {
+          driver._db.prepare(`DELETE FROM ${entry.vecTable} WHERE ${entry.idCol} = ?`).run(row.entity_id);
+        } catch (_) { /* vec table may not exist */ }
+      }
+      driver.write(`DELETE FROM embedding_metadata WHERE entity_type = '${esc(row.entity_type)}' AND entity_id = ${row.entity_id}`);
+      totalPruned++;
+    }
+  }
+
+  return { totalPruned };
 }
 
 module.exports = {
@@ -548,4 +648,5 @@ module.exports = {
   createVecTables,
   getEmbeddingStats,
   backfill,
+  prune,
 };

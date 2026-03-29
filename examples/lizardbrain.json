@@ -8,6 +8,13 @@
     "model": "gpt-5-nano"
   },
 
+  "_comment_context": "Enable context injection to let the LLM see existing knowledge during extraction",
+  "context": {
+    "enabled": false,
+    "tokenBudget": 500,
+    "recencyDays": 30
+  },
+
   "_comment_embedding": "Uncomment below to enable hybrid vector search",
   "embedding": {
     "enabled": false,

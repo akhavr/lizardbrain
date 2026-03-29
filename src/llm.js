@@ -231,4 +231,29 @@ async function extract(messages, config) {
   return JSON.parse(content);
 }
 
-module.exports = { extract, buildPrompt, formatMessages, EXTRACTION_PROMPT };
+/**
+ * Retries extract() on transient errors with exponential backoff + jitter.
+ * Retries on: HTTP 429 (rate limit), 5xx (502, 503, 504), network errors.
+ */
+async function extractWithRetry(messages, config, maxRetries = 3) {
+  let delay = 1000;
+  for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    try {
+      return await extract(messages, config);
+    } catch (err) {
+      const status = err.status || (err.message.match(/error (\d+):/)?.[1] && parseInt(err.message.match(/error (\d+):/)[1]));
+      const errCode = err.code || err.cause?.code;
+      const isRetryable = status === 429 || (status >= 500 && status <= 504)
+        || ['ECONNRESET', 'ETIMEDOUT', 'ENOTFOUND', 'UND_ERR_CONNECT_TIMEOUT'].includes(errCode);
+      if (isRetryable && attempt < maxRetries) {
+        const jitter = delay * (0.5 + Math.random());
+        await new Promise(resolve => setTimeout(resolve, jitter));
+        delay *= 2;
+        continue;
+      }
+      throw err;
+    }
+  }
+}
+
+module.exports = { extract, extractWithRetry, buildPrompt, formatMessages, EXTRACTION_PROMPT };

@@ -2,7 +2,7 @@
  * store.js — Read/write extracted knowledge to memory.db.
  */
 
-const { esc } = require('./driver');
+const { esc, sanitizeFtsQuery } = require('./driver');
 
 function mergeCSV(existing, incoming) {
   const existingSet = new Set(
@@ -59,7 +59,7 @@ function upsertMember(driver, member, messageDate) {
   }
 }
 
-function insertFact(driver, fact, memberId, messageDate) {
+function insertFact(driver, fact, memberId, messageDate, sourceAgent) {
   // Dedup strategy: extract key terms from content and check FTS for similar existing facts.
   // This catches semantically similar facts even when LLM rephrases them.
   const content = fact.content || '';
@@ -84,14 +84,15 @@ function insertFact(driver, fact, memberId, messageDate) {
   }
 
   driver.write(`
-    INSERT INTO facts (category, content, source_member_id, tags, confidence, message_date)
+    INSERT INTO facts (category, content, source_member_id, tags, confidence, message_date, source_agent)
     VALUES (
       '${esc(fact.category)}',
       '${esc(content)}',
       ${memberId || 'NULL'},
       '${esc(fact.tags || '')}',
       ${parseFloat(fact.confidence) || 0.8},
-      '${esc(messageDate)}'
+      '${esc(messageDate)}',
+      ${sourceAgent ? `'${esc(sourceAgent)}'` : 'NULL'}
     );
   `);
   return true;
@@ -143,7 +144,7 @@ function insertTopic(driver, topic, messageDate) {
   return true;
 }
 
-function insertDecision(driver, decision, messageDate) {
+function insertDecision(driver, decision, messageDate, sourceAgent) {
   const description = decision.description || '';
   const prefix = esc(description.substring(0, 80).toLowerCase());
   const exactMatch = driver.read(
@@ -161,20 +162,21 @@ function insertDecision(driver, decision, messageDate) {
   }
 
   driver.write(`
-    INSERT INTO decisions (description, participants, context, status, tags, message_date)
+    INSERT INTO decisions (description, participants, context, status, tags, message_date, source_agent)
     VALUES (
       '${esc(description)}',
       '${esc(decision.participants || '')}',
       '${esc(decision.context || '')}',
       '${esc(decision.status || 'proposed')}',
       '${esc(decision.tags || '')}',
-      '${esc(messageDate)}'
+      '${esc(messageDate)}',
+      ${sourceAgent ? `'${esc(sourceAgent)}'` : 'NULL'}
     );
   `);
   return true;
 }
 
-function insertTask(driver, task, memberId, messageDate) {
+function insertTask(driver, task, memberId, messageDate, sourceAgent) {
   const description = task.description || '';
   const prefix = esc(description.substring(0, 80).toLowerCase());
   const exactMatch = driver.read(
@@ -192,7 +194,7 @@ function insertTask(driver, task, memberId, messageDate) {
   }
 
   driver.write(`
-    INSERT INTO tasks (description, assignee, deadline, status, source_member_id, tags, message_date)
+    INSERT INTO tasks (description, assignee, deadline, status, source_member_id, tags, message_date, source_agent)
     VALUES (
       '${esc(description)}',
       '${esc(task.assignee || '')}',
@@ -200,7 +202,8 @@ function insertTask(driver, task, memberId, messageDate) {
       '${esc(task.status || 'open')}',
       ${memberId || 'NULL'},
       '${esc(task.tags || '')}',
-      '${esc(messageDate)}'
+      '${esc(messageDate)}',
+      ${sourceAgent ? `'${esc(sourceAgent)}'` : 'NULL'}
     );
   `);
   return true;
@@ -388,7 +391,7 @@ function formatContext(context, tokenBudget = 500) {
   return text;
 }
 
-function processExtraction(driver, extracted, messageDate) {
+function processExtraction(driver, extracted, messageDate, { sourceAgent = null } = {}) {
   let totalFacts = 0, totalTopics = 0, totalMembers = 0;
   let totalDecisions = 0, totalTasks = 0, totalQuestions = 0, totalEvents = 0;
   const memberIdMap = {};
@@ -408,7 +411,7 @@ function processExtraction(driver, extracted, messageDate) {
       const memberId = fact.source_member
         ? memberIdMap[fact.source_member.toLowerCase()] || null
         : null;
-      if (insertFact(driver, fact, memberId, messageDate)) {
+      if (insertFact(driver, fact, memberId, messageDate, sourceAgent)) {
         totalFacts++;
       }
     }
@@ -426,7 +429,7 @@ function processExtraction(driver, extracted, messageDate) {
   if (extracted.decisions && Array.isArray(extracted.decisions)) {
     for (const decision of extracted.decisions) {
       if (!decision.description) continue;
-      if (insertDecision(driver, decision, messageDate)) {
+      if (insertDecision(driver, decision, messageDate, sourceAgent)) {
         totalDecisions++;
       }
     }
@@ -438,7 +441,7 @@ function processExtraction(driver, extracted, messageDate) {
       const memberId = task.source_member
         ? memberIdMap[task.source_member.toLowerCase()] || null
         : null;
-      if (insertTask(driver, task, memberId, messageDate)) {
+      if (insertTask(driver, task, memberId, messageDate, sourceAgent)) {
         totalTasks++;
       }
     }
@@ -516,6 +519,10 @@ function resetState(driver) {
   driver.write("UPDATE extraction_state SET last_processed_id = '0', total_messages_processed = 0 WHERE id = 1;");
 }
 
+function setCursor(driver, id) {
+  driver.write(`UPDATE extraction_state SET last_processed_id = '${esc(String(id))}' WHERE id = 1;`);
+}
+
 function getStats(driver) {
   const members = driver.read('SELECT COUNT(*) as c FROM members');
   const facts = driver.read('SELECT COUNT(*) as c FROM facts');
@@ -550,7 +557,8 @@ function getStats(driver) {
 // --- Query helpers ---
 
 function searchFacts(driver, query, limit = 15, minConfidence = 0) {
-  let where = `f.id IN (SELECT rowid FROM facts_fts WHERE facts_fts MATCH '${esc(query)}')`;
+  const sanitized = esc(sanitizeFtsQuery(query));
+  let where = `f.id IN (SELECT rowid FROM facts_fts WHERE facts_fts MATCH '${sanitized}')`;
   if (minConfidence > 0) where += ` AND f.confidence >= ${minConfidence}`;
   return driver.read(
     `SELECT f.*, m.display_name as source FROM facts f LEFT JOIN members m ON f.source_member_id = m.id WHERE ${where} ORDER BY f.confidence DESC, f.created_at DESC LIMIT ${limit}`
@@ -558,14 +566,16 @@ function searchFacts(driver, query, limit = 15, minConfidence = 0) {
 }
 
 function searchTopics(driver, query, limit = 10) {
+  const sanitized = esc(sanitizeFtsQuery(query));
   return driver.read(
-    `SELECT * FROM topics WHERE id IN (SELECT rowid FROM topics_fts WHERE topics_fts MATCH '${esc(query)}') ORDER BY created_at DESC LIMIT ${limit}`
+    `SELECT * FROM topics WHERE id IN (SELECT rowid FROM topics_fts WHERE topics_fts MATCH '${sanitized}') ORDER BY created_at DESC LIMIT ${limit}`
   );
 }
 
 function searchMembers(driver, query) {
+  const sanitized = esc(sanitizeFtsQuery(query));
   return driver.read(
-    `SELECT * FROM members WHERE id IN (SELECT rowid FROM members_fts WHERE members_fts MATCH '${esc(query)}')`
+    `SELECT * FROM members WHERE id IN (SELECT rowid FROM members_fts WHERE members_fts MATCH '${sanitized}')`
   );
 }
 
@@ -576,26 +586,30 @@ function whoKnows(driver, keyword) {
 }
 
 function searchDecisions(driver, query, limit = 10) {
+  const sanitized = esc(sanitizeFtsQuery(query));
   return driver.read(
-    `SELECT * FROM decisions WHERE id IN (SELECT rowid FROM decisions_fts WHERE decisions_fts MATCH '${esc(query)}') ORDER BY created_at DESC LIMIT ${limit}`
+    `SELECT * FROM decisions WHERE id IN (SELECT rowid FROM decisions_fts WHERE decisions_fts MATCH '${sanitized}') ORDER BY created_at DESC LIMIT ${limit}`
   );
 }
 
 function searchTasks(driver, query, limit = 10) {
+  const sanitized = esc(sanitizeFtsQuery(query));
   return driver.read(
-    `SELECT t.*, m.display_name as source FROM tasks t LEFT JOIN members m ON t.source_member_id = m.id WHERE t.id IN (SELECT rowid FROM tasks_fts WHERE tasks_fts MATCH '${esc(query)}') ORDER BY t.created_at DESC LIMIT ${limit}`
+    `SELECT t.*, m.display_name as source FROM tasks t LEFT JOIN members m ON t.source_member_id = m.id WHERE t.id IN (SELECT rowid FROM tasks_fts WHERE tasks_fts MATCH '${sanitized}') ORDER BY t.created_at DESC LIMIT ${limit}`
   );
 }
 
 function searchQuestions(driver, query, limit = 10) {
+  const sanitized = esc(sanitizeFtsQuery(query));
   return driver.read(
-    `SELECT * FROM questions WHERE id IN (SELECT rowid FROM questions_fts WHERE questions_fts MATCH '${esc(query)}') ORDER BY created_at DESC LIMIT ${limit}`
+    `SELECT * FROM questions WHERE id IN (SELECT rowid FROM questions_fts WHERE questions_fts MATCH '${sanitized}') ORDER BY created_at DESC LIMIT ${limit}`
   );
 }
 
 function searchEvents(driver, query, limit = 10) {
+  const sanitized = esc(sanitizeFtsQuery(query));
   return driver.read(
-    `SELECT * FROM events WHERE id IN (SELECT rowid FROM events_fts WHERE events_fts MATCH '${esc(query)}') ORDER BY created_at DESC LIMIT ${limit}`
+    `SELECT * FROM events WHERE id IN (SELECT rowid FROM events_fts WHERE events_fts MATCH '${sanitized}') ORDER BY created_at DESC LIMIT ${limit}`
   );
 }
 
@@ -620,6 +634,7 @@ module.exports = {
   getState,
   updateState,
   resetState,
+  setCursor,
   getStats,
   searchFacts,
   searchTopics,

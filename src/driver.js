@@ -27,7 +27,26 @@ try {
 
 function esc(str) {
   if (str == null) return '';
-  return String(str).replace(/'/g, "''");
+  return String(str).replace(/\0/g, '').replace(/'/g, "''");
+}
+
+/**
+ * Sanitize a user query for FTS5 MATCH — strip operators that could cause parse errors.
+ * Remaining terms are joined with OR (match any term). Internal dedup queries (via
+ * extractKeywords) are already safe; this is for user-facing search.
+ */
+function sanitizeFtsQuery(query) {
+  if (!query) return '';
+  const terms = query
+    .replace(/\0/g, '')
+    .replace(/[*"{}():\-]/g, '')
+    .replace(/\b(NEAR|NOT|OR|AND)\b/gi, '')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .split(' ')
+    .filter(Boolean);
+  if (terms.length === 0) return '';
+  return terms.join(' OR ');
 }
 
 // --- CliDriver ---
@@ -46,12 +65,12 @@ class CliDriver {
   read(sql) {
     try {
       const result = execSync(
-        `sqlite3 -json "${this.dbPath}" "${sql.replace(/"/g, '\\"')}"`,
-        { encoding: 'utf-8', maxBuffer: 10 * 1024 * 1024 }
+        `sqlite3 -json "${this.dbPath}"`,
+        { input: sql, encoding: 'utf-8', stdio: ['pipe', 'pipe', 'pipe'], maxBuffer: 10 * 1024 * 1024 }
       );
       return result.trim() ? JSON.parse(result.trim()) : [];
     } catch (err) {
-      if (err.message.includes('unknown option')) {
+      if (err.message.includes('unknown option') || err.stderr?.toString().includes('unknown option')) {
         return this._readFallback(sql);
       }
       const msg = err.stderr?.toString() || err.message;
@@ -64,8 +83,8 @@ class CliDriver {
   _readFallback(sql) {
     try {
       const result = execSync(
-        `sqlite3 -header -separator '|||' "${this.dbPath}" "${sql.replace(/"/g, '\\"')}"`,
-        { encoding: 'utf-8', maxBuffer: 10 * 1024 * 1024 }
+        `sqlite3 -header -separator '|||' "${this.dbPath}"`,
+        { input: sql, encoding: 'utf-8', stdio: ['pipe', 'pipe', 'pipe'], maxBuffer: 10 * 1024 * 1024 }
       );
       const lines = result.trim().split('\n').filter(Boolean);
       if (lines.length < 2) return [];
@@ -189,6 +208,7 @@ function createDriver(dbPath, options = {}) {
   const { forceBackend } = options;
 
   if (forceBackend === 'cli' || !BetterSqlite3) {
+    console.warn('[lizardbrain] CLI driver selected — not recommended for untrusted input. Install better-sqlite3 for parameterized queries.');
     return new CliDriver(dbPath);
   }
 
@@ -201,4 +221,4 @@ function dbExists(dbPath) {
   return fs.existsSync(dbPath);
 }
 
-module.exports = { createDriver, esc, dbExists, CliDriver, BetterSqliteDriver };
+module.exports = { createDriver, esc, sanitizeFtsQuery, dbExists, CliDriver, BetterSqliteDriver };

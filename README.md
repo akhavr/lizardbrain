@@ -436,8 +436,45 @@ lizardbrain roster [--output path]                  Generate member roster
 | `LIZARDBRAIN_EMBEDDING_MODEL` | Embedding model name |
 | `LIZARDBRAIN_DB_PATH` | Path to memory database |
 | `LIZARDBRAIN_PROFILE` | Extraction profile |
+| `LIZARDBRAIN_SOURCE_AGENT` | Source agent identifier (multi-agent setups) |
+| `LIZARDBRAIN_CONVERSATION_TYPE` | Explicit conversation type (skip heuristic detection) |
 
 </details>
+
+---
+
+## Integration Patterns
+
+### Roster as system prompt injection
+
+The `roster` command generates compact member listings (~30 tokens per person) suitable for injection into agent system prompts. Recommended two-layer approach:
+
+1. **Static layer** (refreshed daily via cron): inject `lizardbrain roster` output as a system prompt section -- gives agents awareness of team members and their expertise
+2. **Dynamic layer** (per-turn): inject `lizardbrain search` results for contextual facts relevant to the current conversation
+
+See `examples/openclaw-plugin.ts` for a full working example.
+
+### CLI driver limitations
+
+The CLI driver (used when `better-sqlite3` is not installed) passes SQL via stdin to the `sqlite3` binary. It uses string escaping rather than parameterized queries. **Do not use the CLI driver with untrusted input.** Install `better-sqlite3` for production deployments with user-facing data.
+
+### Log rotation
+
+LizardBrain uses `console.log` and does not manage log files directly. When running extraction via cron, redirect stdout to a file and use external log rotation:
+
+```bash
+# Cron entry
+0 3 * * * cd /path/to/project && node src/cli.js extract >> /var/log/lizardbrain-extract.log 2>&1
+
+# /etc/logrotate.d/lizardbrain
+/var/log/lizardbrain-extract.log {
+  weekly
+  rotate 4
+  compress
+  missingok
+  notifempty
+}
+```
 
 ---
 

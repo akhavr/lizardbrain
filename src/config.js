@@ -38,6 +38,8 @@ const DEFAULTS = {
   profile: null,
   entities: null,
   factCategories: null,
+  sourceAgent: null,
+  conversationType: null,
 };
 
 function loadEnv(dir) {
@@ -93,6 +95,8 @@ function load(configPath) {
     profile: fileConfig.profile || process.env.LIZARDBRAIN_PROFILE || DEFAULTS.profile,
     entities: fileConfig.entities || DEFAULTS.entities,
     factCategories: fileConfig.factCategories || DEFAULTS.factCategories,
+    sourceAgent: fileConfig.sourceAgent || process.env.LIZARDBRAIN_SOURCE_AGENT || DEFAULTS.sourceAgent,
+    conversationType: fileConfig.conversationType || process.env.LIZARDBRAIN_CONVERSATION_TYPE || DEFAULTS.conversationType,
     llm: {
       baseUrl: fileConfig.llm?.baseUrl || process.env.LIZARDBRAIN_LLM_BASE_URL || process.env.LLM_BASE_URL || DEFAULTS.llm.baseUrl,
       apiKey: fileConfig.llm?.apiKey || process.env.LIZARDBRAIN_LLM_API_KEY || process.env.LLM_API_KEY || DEFAULTS.llm.apiKey,

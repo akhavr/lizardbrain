@@ -25,6 +25,15 @@
     "vector",
     "hybrid-search"
   ],
+  "files": [
+    "src/",
+    "README.md",
+    "LICENSE",
+    "examples/"
+  ],
+  "publishConfig": {
+    "access": "public"
+  },
   "author": "Oleksii Nikitin",
   "license": "MIT",
   "repository": {

@@ -9,7 +9,7 @@ const urlEnricher = require('./enrichers/url');
 const { getProfile } = require('./profiles');
 
 async function run(adapter, driver, config, options = {}) {
-  const { dryRun = false, reprocess = false, rosterPath = null, enrichUrls = true, noEmbed = false } = options;
+  const { dryRun = false, reprocess = false, rosterPath = null, enrichUrls = true, noEmbed = false, limit = null, from = null } = options;
   const { batchSize = 40, minMessages = 5 } = config;
 
   const log = (msg) => console.log(msg);
@@ -47,7 +47,11 @@ async function run(adapter, driver, config, options = {}) {
 
   // Get cursor position
   const state = store.getState(driver);
-  const lastId = state?.last_processed_id || '0';
+  let lastId = state?.last_processed_id || '0';
+  if (from) {
+    log(`Overriding cursor: ${lastId} → ${from} (ephemeral, cursor not mutated)`);
+    lastId = String(from);
+  }
   log(`Last processed ID: ${lastId}`);
 
   // Fetch new messages
@@ -76,6 +80,15 @@ async function run(adapter, driver, config, options = {}) {
     batchMetas.push({ overlapCount: (i === 0) ? 0 : overlap });
   }
   if (overlap > 0) log(`Batch overlap: ${overlap} messages`);
+
+  // Batch limit: --limit N or auto-limit to 1 for dry-run
+  const effectiveLimit = limit || (dryRun ? 1 : null);
+  if (effectiveLimit && batches.length > effectiveLimit) {
+    batches.splice(effectiveLimit);
+    batchMetas.splice(effectiveLimit);
+    log(`Limiting to ${effectiveLimit} batch(es)${dryRun && !limit ? ' (dry-run default)' : ''}`);
+  }
+
   log(`Processing ${batches.length} batch(es)...`);
 
   // Query context from existing knowledge if enabled
@@ -116,24 +129,28 @@ async function run(adapter, driver, config, options = {}) {
     const overlapMsgs = overlapCount > 0 ? batch.slice(0, overlapCount) : null;
     const primaryMsgs = overlapCount > 0 ? batch.slice(overlapCount) : batch;
 
-    if (dryRun) {
-      log(`  [DRY RUN] First: ${primaryMsgs[0].content?.substring(0, 80)}...`);
-      log(`  [DRY RUN] Last:  ${primaryMsgs[primaryMsgs.length - 1].content?.substring(0, 80)}...`);
-      if (overlapMsgs) log(`  [DRY RUN] Overlap: ${overlapMsgs.length} context messages`);
-      continue;
-    }
-
     try {
       const llmConfig = {
         ...config.llm,
+        maxRetries: config.llm?.maxRetries ?? 3,
         profileConfig,
         overlapMessages: overlapMsgs ? formatMessages(overlapMsgs) : null,
         contextSection,
       };
-      const extracted = await llm.extract(primaryMsgs, llmConfig);
+      const extracted = await llm.extractWithRetry(primaryMsgs, llmConfig, llmConfig.maxRetries);
+
+      if (dryRun) {
+        log(`  [DRY RUN] Extracted from LLM (not writing to DB):`);
+        const summary = {};
+        for (const key of ['members', 'facts', 'topics', 'decisions', 'tasks', 'questions', 'events']) {
+          if (extracted[key]?.length) summary[key] = extracted[key].length;
+        }
+        log(`  ${JSON.stringify(summary)}`);
+        continue;
+      }
       const messageDate = primaryMsgs[0].timestamp?.split('T')[0] || new Date().toISOString().split('T')[0];
 
-      const result = store.processExtraction(driver, extracted, messageDate);
+      const result = store.processExtraction(driver, extracted, messageDate, { sourceAgent: config.sourceAgent || null });
       totalFacts += result.totalFacts;
       totalTopics += result.totalTopics;
       totalMembers += result.totalMembers;
