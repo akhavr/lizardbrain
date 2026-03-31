@@ -1402,6 +1402,130 @@ function testExtractFromText() {
   assert(typeof llm.formatMessages === 'function', 'formatMessages still exported');
 }
 
+async function testMcpToolHandlers() {
+  console.log('\n--- Test: mcp-tool-handlers ---');
+
+  let mcp;
+  try {
+    mcp = require('../src/mcp');
+  } catch (e) {
+    console.log('  SKIP: @modelcontextprotocol/sdk not installed');
+    return;
+  }
+
+  // Setup: fresh DB with test data
+  const mcpDb = path.join(TEST_DIR, 'mcp-test.db');
+  lizardbrain.init(mcpDb, { profile: 'full' });
+  const driver = createDriver(mcpDb);
+  migrate(driver);
+
+  store.processExtraction(driver, {
+    members: [
+      { display_name: 'Alice', username: 'alice', expertise: 'Python, ML', projects: 'RAG pipeline' },
+      { display_name: 'Bob', username: 'bob', expertise: 'TypeScript, React', projects: 'Frontend' },
+    ],
+    facts: [
+      { content: 'LangChain works well for RAG', category: 'technique', source_member: 'Alice', tags: 'rag', confidence: 0.9 },
+      { content: 'React 19 has improved SSR', category: 'tool', source_member: 'Bob', tags: 'react', confidence: 0.8 },
+    ],
+    decisions: [
+      { description: 'Use LlamaIndex for PDFs', status: 'agreed', participants: 'Alice, Bob', tags: 'architecture' },
+    ],
+    tasks: [
+      { description: 'Migrate to LlamaIndex', assignee: 'Bob', status: 'open', source_member: 'Bob', tags: 'migration' },
+    ],
+    questions: [
+      { question: 'Which embedding model?', asker: 'Alice', status: 'open', tags: 'embeddings' },
+    ],
+  }, '2026-03-15T10:00:00Z', { sourceAgent: 'test' });
+
+  const handlers = mcp.createHandlers(driver, {});
+
+  // --- get_context ---
+  const ctx1 = await handlers.get_context({ participants: ['Alice'] });
+  assert(!ctx1.isError, 'get_context: no error');
+  assert(ctx1.data.participants.length >= 1, 'get_context: returns participants');
+  assert(ctx1.data.participants[0].name === 'Alice', 'get_context: correct participant name');
+
+  const ctx2 = await handlers.get_context({ topics: ['rag'] });
+  assert(!ctx2.isError, 'get_context topics: no error');
+  assert(ctx2.data.facts.length >= 1, 'get_context topics: returns facts');
+
+  const ctx3 = await handlers.get_context({});
+  assert(!ctx3.isError, 'get_context general: no error');
+
+  // --- search ---
+  const s1 = await handlers.search({ query: 'LangChain' });
+  assert(!s1.isError, 'search: no error');
+  assert(s1.data.results.length >= 1, 'search: returns results');
+  assert(s1.data.results[0].type !== undefined, 'search: results have type field');
+  assert(s1.data.results[0].text !== undefined, 'search: results have text field');
+
+  const s2 = await handlers.search({ query: 'LangChain', types: ['fact'] });
+  assert(!s2.isError, 'search type filter: no error');
+  for (const r of s2.data.results) {
+    assert(r.type === 'fact', 'search type filter: only facts returned');
+  }
+
+  const s3 = await handlers.search({ query: '' });
+  assert(!s3.isError, 'search empty: no error');
+  assert(s3.data.results.length === 0, 'search empty: empty results');
+
+  // --- who_knows ---
+  const w1 = await handlers.who_knows({ topic: 'Python' });
+  assert(!w1.isError, 'who_knows: no error');
+  assert(w1.data.members.length >= 1, 'who_knows: returns members');
+  assert(w1.data.members[0].name !== undefined, 'who_knows: members have name');
+
+  // --- get_stats ---
+  const st1 = await handlers.get_stats({});
+  assert(!st1.isError, 'get_stats: no error');
+  assert(st1.data.facts >= 2, 'get_stats: correct fact count');
+  assert(st1.data.members >= 2, 'get_stats: correct member count');
+
+  // --- add_knowledge ---
+  const ak1 = await handlers.add_knowledge({
+    facts: [{ content: 'New fact from MCP', category: 'tool', tags: 'mcp' }],
+    sourceAgent: 'test-agent',
+  });
+  assert(!ak1.isError, 'add_knowledge: no error');
+  assert(ak1.data.inserted.facts >= 1, 'add_knowledge: fact inserted');
+
+  // add_knowledge dedup
+  const ak2 = await handlers.add_knowledge({
+    facts: [{ content: 'New fact from MCP', category: 'tool', tags: 'mcp' }],
+  });
+  assert(!ak2.isError, 'add_knowledge dedup: no error');
+  assert(ak2.data.inserted.facts === 0, 'add_knowledge dedup: duplicate skipped');
+
+  // --- update_entity ---
+  const tasks = driver.read('SELECT id FROM tasks LIMIT 1');
+  if (tasks.length > 0) {
+    const u1 = await handlers.update_entity({ type: 'task', id: tasks[0].id, status: 'done' });
+    assert(!u1.isError, 'update_entity task: no error');
+    assert(u1.data.updated === true, 'update_entity task: updated');
+  }
+
+  const decisions = driver.read('SELECT id FROM decisions LIMIT 1');
+  if (decisions.length > 0) {
+    const u2 = await handlers.update_entity({ type: 'decision', id: decisions[0].id, status: 'revisited' });
+    assert(!u2.isError, 'update_entity decision: no error');
+    assert(u2.data.updated === true, 'update_entity decision: updated');
+  }
+
+  // update_entity validation errors
+  const u3 = await handlers.update_entity({ type: 'task', id: 1 });
+  assert(u3.isError === true, 'update_entity: missing status is error');
+
+  const u4 = await handlers.update_entity({ type: 'question', id: 1 });
+  assert(u4.isError === true, 'update_entity: missing answer is error');
+
+  const u5 = await handlers.update_entity({ type: 'invalid', id: 1 });
+  assert(u5.isError === true, 'update_entity: invalid type is error');
+
+  driver.close();
+}
+
 // --- Run ---
 
 async function runAll() {
@@ -1440,6 +1564,7 @@ async function runAll() {
   testStdinAdapter();
   testContextAssembly();
   testExtractFromText();
+  await testMcpToolHandlers();
   await testUrlEnrichment();
 
   console.log(`\n=== Results: ${passed} passed, ${failed} failed ===\n`);
