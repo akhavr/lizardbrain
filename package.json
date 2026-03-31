@@ -10,6 +10,7 @@
     "init": "node src/cli.js init",
     "extract": "node src/cli.js extract",
     "stats": "node src/cli.js stats",
+    "serve": "node src/cli.js serve",
     "test": "node test/run.js"
   },
   "keywords": [
@@ -46,5 +47,9 @@
   "optionalDependencies": {
     "better-sqlite3": "^12.8.0",
     "sqlite-vec": "^0.1.7"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.29.0",
+    "zod": "^4.3.6"
   }
 }
