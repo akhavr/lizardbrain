@@ -9,7 +9,7 @@
  *   2. Copy this file as index.ts (or openclaw-plugin.ts)
  *   3. Copy openclaw.plugin.json to the same directory
  *   4. Create package.json in the same directory (see openclaw-plugin-package.json):
- *        { "name": "memory-recall", "version": "0.6.0", "type": "module", "main": "openclaw-plugin.ts" }
+ *        { "name": "memory-recall", "version": "0.7.0", "type": "module", "main": "openclaw-plugin.ts" }
  *   5. Run: npm install lizardbrain
  *   6. Register in openclaw.json (NOT in plugins.installs — that causes silent skipping):
  *        {
@@ -42,6 +42,7 @@ const plugin = {
   register(api: any) {
     const dbPath = api.getConfig?.()?.lizardbrainDbPath || process.env.LIZARDBRAIN_DB_PATH || "./lizardbrain.db";
     const maxResults = api.getConfig?.()?.maxResults ?? 5;
+    const enableDMs = api.getConfig?.()?.enableDMs ?? false;
 
     // Lazy-load lizardbrain to avoid startup penalty when plugin is disabled
     let lb: any = null;
@@ -59,7 +60,7 @@ const plugin = {
 
     api.on("before_prompt_build", async (event: any, ctx: any) => {
       try {
-        if (ctx.chatType === "direct" || ctx.chatType === "dm") return {};
+        if (!enableDMs && (ctx.chatType === "direct" || ctx.chatType === "dm")) return {};
         const messages = event.messages || [];
         const last = messages[messages.length - 1];
         if (!last || last.role !== "user") return {};

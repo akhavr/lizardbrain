@@ -3,7 +3,7 @@
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Node.js >= 18](https://img.shields.io/badge/node-%3E%3D18-brightgreen.svg)](https://nodejs.org)
-[![Version](https://img.shields.io/badge/version-0.6.0-orange.svg)](package.json)
+[![Version](https://img.shields.io/badge/version-0.7.0-orange.svg)](package.json)
 
 Your group chat has years of knowledge buried in thousands of messages. Who knows what, what was decided, what tasks were assigned, what questions were answered -- it's all there, but impossible to find.
 
@@ -114,9 +114,11 @@ No manual intervention needed. The LLM references entity IDs from context and ou
 
 **Built for agents.** Generate a compact member roster (~30 tokens per person) designed to fit in an agent's system prompt. At 100 members, that's ~3,000 tokens.
 
+**MCP server built in.** Run `lizardbrain serve` and any MCP-compatible client (Claude Desktop, Cursor, custom agents) can read, search, and write knowledge directly. No shell-outs, no parsing CLI output — agents talk to LizardBrain over the Model Context Protocol.
+
 ---
 
-## v0.6 features
+## v0.6 features (included in v0.7)
 
 <details>
 <summary>Security hardening</summary>
@@ -469,6 +471,18 @@ const tasks = lizardbrain.query.searchTasks(driver, 'migration');
 const roster = lizardbrain.query.generateRoster(driver);
 // roster.content is ~30 tokens per member, ready for a system prompt
 
+// Assemble context for an agent (used by MCP server internally)
+const context = lizardbrain.context.assembleContext(driver, {
+  participants: ['Alice', 'Bob'],
+  topics: ['kubernetes'],
+  recencyDays: 30,
+  tokenBudget: 2000,
+});
+
+// Start an MCP server programmatically
+const server = lizardbrain.createServer({ driver, config });
+await server.listen(); // connects stdio transport
+
 driver.close();
 ```
 
@@ -488,6 +502,7 @@ lizardbrain who <keyword>                                  Find members by exper
 lizardbrain roster [--output path]                         Generate member roster
 lizardbrain reset-cursor [--to <id>]                       Reset extraction cursor
 lizardbrain prune-embeddings [--orphaned] [--stale] [--model <name>]  Clean up embeddings
+lizardbrain serve                                         Start MCP server (stdio)
 ```
 
 | Flag | Description |
@@ -517,6 +532,125 @@ lizardbrain prune-embeddings [--orphaned] [--stale] [--model <name>]  Clean up e
 | `LIZARDBRAIN_CONVERSATION_TYPE` | Explicit conversation type (skip heuristic detection) |
 
 </details>
+
+---
+
+## MCP Server
+
+Run LizardBrain as an [MCP](https://modelcontextprotocol.io/) server so any compatible agent can read, search, and write knowledge directly:
+
+```bash
+node src/cli.js serve
+```
+
+Requires `better-sqlite3` and `@modelcontextprotocol/sdk` (installed via `npm install`). The server communicates over stdio using JSON-RPC.
+
+### Tools
+
+The MCP server exposes 7 tools:
+
+| Tool | Type | Description |
+|------|------|-------------|
+| `get_context` | Read | Assembled, token-budgeted context for a conversation (participants, topics, or both) |
+| `search` | Read | Unified search across all entity types (hybrid FTS5 + vector, or FTS-only fallback) |
+| `who_knows` | Read | Find people by expertise or involvement |
+| `get_stats` | Read | Database overview (entity counts) |
+| `add_knowledge` | Write | Structured write-back — agent provides pre-structured entities |
+| `ingest` | Write | Unstructured write-back — raw text is sent through LLM extraction and stored |
+| `update_entity` | Update | Update status of decisions, tasks, or questions |
+
+### Client configuration
+
+<details>
+<summary>Claude Desktop</summary>
+
+Add to your Claude Desktop config (`~/Library/Application Support/Claude/claude_desktop_config.json` on macOS):
+
+```json
+{
+  "mcpServers": {
+    "lizardbrain": {
+      "command": "node",
+      "args": ["/path/to/lizardbrain/src/cli.js", "serve"],
+      "env": {
+        "LIZARDBRAIN_LLM_API_KEY": "your-key"
+      }
+    }
+  }
+}
+```
+
+</details>
+
+<details>
+<summary>Claude Code</summary>
+
+Add to your project's `.mcp.json`:
+
+```json
+{
+  "mcpServers": {
+    "lizardbrain": {
+      "command": "node",
+      "args": ["/path/to/lizardbrain/src/cli.js", "serve"],
+      "env": {
+        "LIZARDBRAIN_LLM_API_KEY": "your-key"
+      }
+    }
+  }
+}
+```
+
+</details>
+
+<details>
+<summary>Cursor</summary>
+
+Add to your Cursor MCP settings:
+
+```json
+{
+  "mcpServers": {
+    "lizardbrain": {
+      "command": "node",
+      "args": ["/path/to/lizardbrain/src/cli.js", "serve"],
+      "env": {
+        "LIZARDBRAIN_LLM_API_KEY": "your-key"
+      }
+    }
+  }
+}
+```
+
+</details>
+
+### Example usage
+
+Once connected, an agent can:
+
+```
+# Load context about specific people and topics
+get_context({ participants: ["Alice", "Bob"], topics: ["kubernetes"], tokenBudget: 2000 })
+
+# Search for specific knowledge
+search({ query: "database migration", types: ["decisions", "tasks"], limit: 5 })
+
+# Write structured knowledge directly
+add_knowledge({ facts: [{ category: "technique", content: "Use pg_dump for migrations", confidence: 0.9 }] })
+
+# Ingest raw text through LLM extraction
+ingest({ text: "Alice said we should switch to PostgreSQL. Bob agreed.", profile: "team" })
+
+# Update entity status
+update_entity({ type: "task", id: 42, status: "done" })
+```
+
+### Notes
+
+- The `ingest` tool requires LLM configuration (same as `extract`). All other tools work without an LLM.
+- All logging goes to stderr — stdout is reserved for JSON-RPC.
+- The server uses `better-sqlite3` exclusively (no CLI driver fallback) to prevent SQL injection.
+- `sqlite-vec` remains optional — hybrid search when available, FTS-only fallback otherwise.
 
 ---
 
@@ -697,7 +831,8 @@ Higher token budget and item limits because projects tend to have many concurren
 | Tier | What you need |
 |------|--------------|
 | **Core** (zero deps) | Node.js >= 18 and `sqlite3` CLI (already on macOS/Linux) |
-| **Vector** (optional) | + `npm install better-sqlite3 sqlite-vec` + any embedding API |
+| **MCP** (agent access) | + `npm install better-sqlite3 @modelcontextprotocol/sdk zod` |
+| **Vector** (semantic search) | + `npm install sqlite-vec` + any embedding API |
 
 ---
 

@@ -1,7 +1,7 @@
 {
   "id": "memory-recall",
   "name": "Memory Recall",
-  "version": "0.6.0",
+  "version": "0.7.0",
   "description": "Auto-injects lizardbrain search results into agent context for community knowledge recall.",
   "entry": "openclaw-plugin.ts",
   "config": {
@@ -14,9 +14,14 @@
       "type": "number",
       "description": "Maximum number of search results to inject",
       "default": 5
+    },
+    "enableDMs": {
+      "type": "boolean",
+      "description": "Inject memory context in direct messages (DMs), not just group chats",
+      "default": false
     }
   },
   "dependencies": {
-    "lizardbrain": ">=0.6.0"
+    "lizardbrain": ">=0.7.0"
   }
 }
