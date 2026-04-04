@@ -214,26 +214,48 @@ function ftsSearch(driver, query, limit) {
 }
 
 /**
- * Run vector kNN search across facts_vec, topics_vec, and members_vec.
+ * Build a Set of entity IDs that were embedded by the given model.
+ * Returns null if modelId is falsy (no filtering needed).
+ */
+function buildModelFilter(db, entityType, modelId) {
+  if (!modelId) return null;
+  try {
+    const rows = db.prepare(
+      'SELECT entity_id FROM embedding_metadata WHERE entity_type = ? AND model_id = ?'
+    ).all(entityType, modelId);
+    return new Set(rows.map(r => r.entity_id));
+  } catch (_) {
+    return null; // table may not exist on older schemas
+  }
+}
+
+/**
+ * Run vector kNN search across all entity vec tables.
  * Requires driver._db (raw better-sqlite3) and sqlite-vec extension loaded.
  *
  * @param {object} driver - lizardbrain driver instance with ._db
  * @param {number[]} queryEmbedding - Query vector as array of floats
  * @param {number} limit - Max results per table
+ * @param {string|null} modelId - Filter to embeddings from this model (null = no filter)
  * @returns {Array<{key: string, data: object}>}
  */
-function vecSearch(driver, queryEmbedding, limit) {
+function vecSearch(driver, queryEmbedding, limit, modelId) {
   const db = driver._db;
   const embeddingBuffer = new Float32Array(queryEmbedding);
   const results = [];
 
   // Search facts_vec
   try {
+    const fetchLimit = modelId ? limit * 3 : limit;
     const factRows = db.prepare(
       `SELECT fact_id, distance FROM facts_vec WHERE embedding MATCH ? ORDER BY distance LIMIT ?`
-    ).all(embeddingBuffer, limit);
+    ).all(embeddingBuffer, fetchLimit);
+    const modelFilter = buildModelFilter(db, 'fact', modelId);
+    let count = 0;
 
     for (const row of factRows) {
+      if (count >= limit) break;
+      if (modelFilter && !modelFilter.has(row.fact_id)) continue;
       const fact = db.prepare(
         `SELECT f.id, f.content, f.confidence, f.tags, f.category, m.display_name as member
          FROM facts f
@@ -253,6 +275,7 @@ function vecSearch(driver, queryEmbedding, limit) {
             category: fact.category,
           },
         });
+        count++;
       }
     }
   } catch (_) {
@@ -261,11 +284,16 @@ function vecSearch(driver, queryEmbedding, limit) {
 
   // Search topics_vec
   try {
+    const fetchLimit = modelId ? limit * 3 : limit;
     const topicRows = db.prepare(
       `SELECT topic_id, distance FROM topics_vec WHERE embedding MATCH ? ORDER BY distance LIMIT ?`
-    ).all(embeddingBuffer, limit);
+    ).all(embeddingBuffer, fetchLimit);
+    const modelFilter = buildModelFilter(db, 'topic', modelId);
+    let count = 0;
 
     for (const row of topicRows) {
+      if (count >= limit) break;
+      if (modelFilter && !modelFilter.has(row.topic_id)) continue;
       const topic = db.prepare(
         `SELECT id, name, summary, tags, participants FROM topics WHERE id = ?`
       ).get(row.topic_id);
@@ -280,6 +308,7 @@ function vecSearch(driver, queryEmbedding, limit) {
             participants: topic.participants || '',
           },
         });
+        count++;
       }
     }
   } catch (_) {
@@ -288,11 +317,16 @@ function vecSearch(driver, queryEmbedding, limit) {
 
   // Search members_vec
   try {
+    const fetchLimit = modelId ? limit * 3 : limit;
     const memberRows = db.prepare(
       `SELECT member_id, distance FROM members_vec WHERE embedding MATCH ? ORDER BY distance LIMIT ?`
-    ).all(embeddingBuffer, limit);
+    ).all(embeddingBuffer, fetchLimit);
+    const modelFilter = buildModelFilter(db, 'member', modelId);
+    let count = 0;
 
     for (const row of memberRows) {
+      if (count >= limit) break;
+      if (modelFilter && !modelFilter.has(row.member_id)) continue;
       const member = db.prepare(
         `SELECT id, display_name, username, expertise, projects FROM members WHERE id = ?`
       ).get(row.member_id);
@@ -307,6 +341,7 @@ function vecSearch(driver, queryEmbedding, limit) {
             projects: member.projects || '',
           },
         });
+        count++;
       }
     }
   } catch (_) {
@@ -315,11 +350,16 @@ function vecSearch(driver, queryEmbedding, limit) {
 
   // Search decisions_vec
   try {
+    const fetchLimit = modelId ? limit * 3 : limit;
     const decisionRows = db.prepare(
       `SELECT decision_id, distance FROM decisions_vec WHERE embedding MATCH ? ORDER BY distance LIMIT ?`
-    ).all(embeddingBuffer, limit);
+    ).all(embeddingBuffer, fetchLimit);
+    const modelFilter = buildModelFilter(db, 'decision', modelId);
+    let count = 0;
 
     for (const row of decisionRows) {
+      if (count >= limit) break;
+      if (modelFilter && !modelFilter.has(row.decision_id)) continue;
       const decision = db.prepare(
         `SELECT id, description, context, participants, status, tags FROM decisions WHERE id = ?`
       ).get(row.decision_id);
@@ -336,6 +376,7 @@ function vecSearch(driver, queryEmbedding, limit) {
             tags: decision.tags || '',
           },
         });
+        count++;
       }
     }
   } catch (_) {
@@ -344,11 +385,16 @@ function vecSearch(driver, queryEmbedding, limit) {
 
   // Search tasks_vec
   try {
+    const fetchLimit = modelId ? limit * 3 : limit;
     const taskRows = db.prepare(
       `SELECT task_id, distance FROM tasks_vec WHERE embedding MATCH ? ORDER BY distance LIMIT ?`
-    ).all(embeddingBuffer, limit);
+    ).all(embeddingBuffer, fetchLimit);
+    const modelFilter = buildModelFilter(db, 'task', modelId);
+    let count = 0;
 
     for (const row of taskRows) {
+      if (count >= limit) break;
+      if (modelFilter && !modelFilter.has(row.task_id)) continue;
       const task = db.prepare(
         `SELECT t.id, t.description, t.assignee, t.status, t.tags, m.display_name as member
          FROM tasks t LEFT JOIN members m ON t.source_member_id = m.id WHERE t.id = ?`
@@ -366,6 +412,7 @@ function vecSearch(driver, queryEmbedding, limit) {
             tags: task.tags || '',
           },
         });
+        count++;
       }
     }
   } catch (_) {
@@ -374,11 +421,16 @@ function vecSearch(driver, queryEmbedding, limit) {
 
   // Search questions_vec
   try {
+    const fetchLimit = modelId ? limit * 3 : limit;
     const questionRows = db.prepare(
       `SELECT question_id, distance FROM questions_vec WHERE embedding MATCH ? ORDER BY distance LIMIT ?`
-    ).all(embeddingBuffer, limit);
+    ).all(embeddingBuffer, fetchLimit);
+    const modelFilter = buildModelFilter(db, 'question', modelId);
+    let count = 0;
 
     for (const row of questionRows) {
+      if (count >= limit) break;
+      if (modelFilter && !modelFilter.has(row.question_id)) continue;
       const question = db.prepare(
         `SELECT id, question, asker, answer, answered_by, status, tags FROM questions WHERE id = ?`
       ).get(row.question_id);
@@ -396,6 +448,7 @@ function vecSearch(driver, queryEmbedding, limit) {
             tags: question.tags || '',
           },
         });
+        count++;
       }
     }
   } catch (_) {
@@ -404,11 +457,16 @@ function vecSearch(driver, queryEmbedding, limit) {
 
   // Search events_vec
   try {
+    const fetchLimit = modelId ? limit * 3 : limit;
     const eventRows = db.prepare(
       `SELECT event_id, distance FROM events_vec WHERE embedding MATCH ? ORDER BY distance LIMIT ?`
-    ).all(embeddingBuffer, limit);
+    ).all(embeddingBuffer, fetchLimit);
+    const modelFilter = buildModelFilter(db, 'event', modelId);
+    let count = 0;
 
     for (const row of eventRows) {
+      if (count >= limit) break;
+      if (modelFilter && !modelFilter.has(row.event_id)) continue;
       const event = db.prepare(
         `SELECT id, name, description, event_date, location, attendees, tags FROM events WHERE id = ?`
       ).get(row.event_id);
@@ -426,6 +484,7 @@ function vecSearch(driver, queryEmbedding, limit) {
             tags: event.tags || '',
           },
         });
+        count++;
       }
     }
   } catch (_) {
@@ -459,7 +518,7 @@ async function search(driver, query, options = {}) {
       const embeddings = require('./embeddings');
       const { embeddings: vecs } = await embeddings.embedWithRetry([query], embeddingConfig);
       const queryVector = vecs[0];
-      const vecResults = vecSearch(driver, queryVector, ftsLimit);
+      const vecResults = vecSearch(driver, queryVector, ftsLimit, embeddingConfig.model);
       const merged = mergeRRF([ftsResults, vecResults]);
 
       const results = merged.slice(0, limit).map(item => {
