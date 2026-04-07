@@ -82,13 +82,20 @@ const ENTITY_DEFS = {
       "content": "the factual claim or insight, 1-2 sentences",
       "source_member": "display_name of who said it",
       "tags": "comma-separated relevant tags",
-      "confidence": 0.0 to 1.0
+      "confidence": 0.0 to 1.0,
+      "durability": "one of: ephemeral, short, medium, durable"
     }
   ]`,
     rules: (labels, categories) => `Fact rules:
 - Category must be one of: ${categories.join(', ')}
 - Confidence: 0.9+ for verified specifics (pricing, versions, benchmarks). 0.75-0.85 for opinions and personal experiences. 0.5-0.7 for secondhand claims or speculation
-- Tags should be lowercase, useful for search`,
+- Tags should be lowercase, useful for search
+- Durability: how long this fact stays relevant
+  - "ephemeral": temporary states, current blockers, this-week items (valid ~1 week)
+  - "short": sprint goals, short-term plans (valid ~1 month)
+  - "medium": quarterly goals, project phases (valid ~3 months)
+  - "durable": tech stack, expertise, architecture, permanent knowledge (no expiration)
+  - Default to "durable" if unsure`,
   },
 
   topics: {

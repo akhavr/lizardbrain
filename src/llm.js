@@ -194,6 +194,7 @@ const factSchema = z.object({
   source_member: z.string().nullable(),
   tags: z.string().nullable(),
   confidence: z.number().nullable(),
+  durability: z.enum(['ephemeral', 'short', 'medium', 'durable']).nullable().optional(),
 });
 
 const topicSchema = z.object({

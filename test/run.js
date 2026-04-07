@@ -1234,6 +1234,50 @@ function testMigrationV09() {
   driver.close();
 }
 
+function testDurabilityInSchema() {
+  console.log('\n--- Test: durability in extraction schema ---');
+
+  const { buildExtractionSchema } = require('../src/llm');
+
+  const schema = buildExtractionSchema(['members', 'facts', 'topics'], false);
+  const testData = {
+    members: [],
+    facts: [{ category: 'tool', content: 'Test fact', source_member: null, tags: null, confidence: 0.9, durability: 'ephemeral' }],
+    topics: [],
+  };
+  const result = schema.safeParse(testData);
+  assert(result.success, 'Schema accepts durability field on facts');
+
+  const nullData = {
+    members: [],
+    facts: [{ category: 'tool', content: 'Test fact', source_member: null, tags: null, confidence: 0.9, durability: null }],
+    topics: [],
+  };
+  const nullResult = schema.safeParse(nullData);
+  assert(nullResult.success, 'Schema accepts null durability');
+
+  const missingData = {
+    members: [],
+    facts: [{ category: 'tool', content: 'Test fact', source_member: null, tags: null, confidence: 0.9 }],
+    topics: [],
+  };
+  const missingResult = schema.safeParse(missingData);
+  assert(missingResult.success, 'Schema accepts facts without durability field');
+}
+
+function testDurabilityInPrompt() {
+  console.log('\n--- Test: durability in prompt ---');
+
+  const { buildPrompt } = require('../src/llm');
+  const { getProfile } = require('../src/profiles');
+
+  const profileConfig = getProfile('knowledge');
+  const prompt = buildPrompt('test messages', profileConfig);
+  assert(prompt.includes('durability'), 'Prompt includes durability field');
+  assert(prompt.includes('ephemeral'), 'Prompt includes ephemeral option');
+  assert(prompt.includes('durable'), 'Prompt includes durable option');
+}
+
 function testSupersededFiltering() {
   console.log('\n--- Test: superseded filtering ---');
 
@@ -2025,6 +2069,8 @@ async function runAll() {
   testMigrationV05();
   testMigrationV08();
   testMigrationV09();
+  testDurabilityInSchema();
+  testDurabilityInPrompt();
   testSupersededFiltering();
   testFindContradictionCandidates();
   testProcessExtractionInsertedIds();
