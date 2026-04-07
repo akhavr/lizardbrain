@@ -332,6 +332,51 @@ function markSuperseded(driver, entityType, oldId, newId) {
   return true;
 }
 
+// --- Contradiction candidate search ---
+
+/**
+ * Entity type → content field mapping for contradiction candidate search.
+ */
+const ENTITY_CONTENT_FIELDS = {
+  facts: { textField: 'content', ftsTable: 'facts_fts' },
+  topics: { textField: "name || ' ' || COALESCE(summary, '')", ftsTable: 'topics_fts' },
+  decisions: { textField: "description || ' ' || COALESCE(context, '')", ftsTable: 'decisions_fts' },
+  tasks: { textField: 'description', ftsTable: 'tasks_fts' },
+  questions: { textField: "question || ' ' || COALESCE(answer, '')", ftsTable: 'questions_fts' },
+  events: { textField: "name || ' ' || COALESCE(description, '')", ftsTable: 'events_fts' },
+  members: { textField: "display_name || ' ' || COALESCE(expertise, '') || ' ' || COALESCE(projects, '')", ftsTable: 'members_fts' },
+};
+
+/**
+ * Find existing entities that might contradict new content.
+ * Uses FTS keyword search to find candidates.
+ *
+ * @param {object} driver
+ * @param {string} entityType - e.g. 'facts', 'decisions'
+ * @param {string} content - Text content of the new entity
+ * @param {object} options - { maxCandidates, excludeId }
+ * @returns {Array<{id: number, content: string}>}
+ */
+function findContradictionCandidates(driver, entityType, content, options = {}) {
+  const { maxCandidates = 5, excludeId = null } = options;
+  const fieldDef = ENTITY_CONTENT_FIELDS[entityType];
+  if (!fieldDef) return [];
+
+  // FTS-based search: extract keywords and search FTS table
+  const keywords = extractKeywords(content);
+  if (keywords.length < 2) return [];
+
+  const ftsQuery = esc(keywords.slice(0, 3).join(' OR '));
+  let excludeClause = 'superseded_by IS NULL';
+  if (excludeId) excludeClause += ` AND id != ${parseInt(excludeId)}`;
+
+  const results = driver.read(
+    `SELECT id, ${fieldDef.textField} as content FROM ${entityType} WHERE id IN (SELECT rowid FROM ${fieldDef.ftsTable} WHERE ${fieldDef.ftsTable} MATCH '${ftsQuery}') AND ${excludeClause} ORDER BY created_at DESC LIMIT ${maxCandidates}`
+  );
+
+  return results.map(r => ({ id: r.id, content: r.content }));
+}
+
 // --- Context query helpers ---
 
 function getActiveContext(driver, profileConfig, options = {}) {
@@ -753,6 +798,7 @@ module.exports = {
   updateTaskStatus,
   updateQuestionAnswer,
   markSuperseded,
+  findContradictionCandidates,
   getKnownMemberNames,
   getActiveContext,
   formatContext,

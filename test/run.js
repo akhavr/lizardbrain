@@ -1268,6 +1268,58 @@ function testSupersededFiltering() {
   driver.close();
 }
 
+function testFindContradictionCandidates() {
+  console.log('\n--- Test: find contradiction candidates ---');
+
+  const db = path.join(TEST_DIR, 'candidates.db');
+  if (fs.existsSync(db)) fs.unlinkSync(db);
+  lizardbrain.init(db, { profile: 'full' });
+  const driver = createDriver(db);
+  migrate(driver);
+
+  // Insert some facts
+  store.processExtraction(driver, {
+    members: [],
+    facts: [
+      { category: 'tool', content: 'Team uses PostgreSQL for the primary database', tags: 'database,postgres', confidence: 0.9 },
+      { category: 'tool', content: 'Redis is used for caching layer', tags: 'database,redis', confidence: 0.9 },
+      { category: 'opinion', content: 'Python is the best language for data science', tags: 'python,datascience', confidence: 0.8 },
+    ],
+    topics: [],
+  }, '2026-04-01');
+
+  // FTS-based candidate search: should find database-related facts
+  const candidates = store.findContradictionCandidates(driver, 'facts', 'Team migrated from PostgreSQL to MySQL', { maxCandidates: 5 });
+  assert(candidates.length >= 1, `Found ${candidates.length} candidates (expected >= 1)`);
+  assert(candidates.some(c => c.content.includes('PostgreSQL')), 'Found PostgreSQL fact as candidate');
+
+  // Should not find unrelated facts
+  const unrelated = store.findContradictionCandidates(driver, 'facts', 'The weather is nice today', { maxCandidates: 5 });
+  assert(unrelated.length === 0, 'No candidates for unrelated content');
+
+  // Superseded facts should be excluded
+  const allFacts = driver.read('SELECT id FROM facts ORDER BY id');
+  driver.write(`UPDATE facts SET superseded_by = 999 WHERE id = ${allFacts[0].id}`);
+  const afterSupersede = store.findContradictionCandidates(driver, 'facts', 'Team migrated from PostgreSQL to MySQL', { maxCandidates: 5 });
+  const hasSuperseded = afterSupersede.some(c => c.id === allFacts[0].id);
+  assert(!hasSuperseded, 'Superseded facts excluded from candidates');
+
+  // Works for decisions too
+  store.processExtraction(driver, {
+    members: [],
+    facts: [],
+    decisions: [
+      { description: 'Deploy to AWS us-east-1 region', status: 'agreed', tags: 'infrastructure' },
+    ],
+    topics: [],
+  }, '2026-04-01');
+
+  const decCandidates = store.findContradictionCandidates(driver, 'decisions', 'Deploy to GCP europe-west1 instead of AWS', { maxCandidates: 5 });
+  assert(decCandidates.length >= 1, 'Found decision candidates');
+
+  driver.close();
+}
+
 function testCredentialFiltering() {
   console.log('\n--- Test: credential filtering ---');
 
@@ -1811,6 +1863,7 @@ async function runAll() {
   testMigrationV05();
   testMigrationV08();
   testSupersededFiltering();
+  testFindContradictionCandidates();
   testCredentialFiltering();
   testGenericMemberFiltering();
   testCodeFenceStripping();
