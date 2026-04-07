@@ -762,7 +762,7 @@ function testMigration() {
 
   // Verify schema version set
   const version = driver.read("SELECT value FROM lizardbrain_meta WHERE key = 'schema_version'");
-  assert(version[0]?.value === '0.7', 'Schema version set to 0.7');
+  assert(version[0]?.value === '0.8', 'Schema version set to 0.8');
 
   // Idempotent: running again should be a no-op
   const result2 = migrate(driver);
@@ -1160,11 +1160,49 @@ function testMigrationV05() {
 
   // Verify schema version
   const version = driver.read("SELECT value FROM lizardbrain_meta WHERE key = 'schema_version'");
-  assert(version[0]?.value === '0.7', 'Schema version updated to 0.7');
+  assert(version[0]?.value === '0.8', 'Schema version updated to 0.8');
 
   // Idempotent
   const result2 = migrate(driver);
   assert(result2.migrated === false, 'Second v0.5 migration is no-op');
+
+  driver.close();
+}
+
+function testMigrationV08() {
+  console.log('\n--- Test: migration v0.8 (superseded_by) ---');
+
+  const V07_DB = path.join(TEST_DIR, 'v07.db');
+  if (fs.existsSync(V07_DB)) fs.unlinkSync(V07_DB);
+  lizardbrain.init(V07_DB, { profile: 'full' });
+  const driver = createDriver(V07_DB);
+
+  // Force version to 0.7 to trigger migration
+  driver.write("UPDATE lizardbrain_meta SET value = '0.7' WHERE key = 'schema_version';");
+
+  const result = migrate(driver);
+  assert(result.migrated === true, 'v0.8 migration ran');
+
+  // Verify superseded_by column exists on all entity tables
+  const tables = ['facts', 'topics', 'decisions', 'tasks', 'questions', 'events', 'members'];
+  for (const table of tables) {
+    const cols = driver.read(`PRAGMA table_info(${table})`);
+    const hasSuperCol = cols.some(c => c.name === 'superseded_by');
+    assert(hasSuperCol, `${table} has superseded_by column`);
+  }
+
+  // Verify total_superseded column on extraction_state
+  const stateCols = driver.read('PRAGMA table_info(extraction_state)');
+  const hasSupersededStat = stateCols.some(c => c.name === 'total_superseded');
+  assert(hasSupersededStat, 'extraction_state has total_superseded column');
+
+  // Verify schema version is 0.8
+  const version = driver.read("SELECT value FROM lizardbrain_meta WHERE key = 'schema_version'");
+  assert(version[0]?.value === '0.8', 'Schema version set to 0.8');
+
+  // Idempotent
+  const result2 = migrate(driver);
+  assert(result2.migrated === false, 'Second v0.8 migration is no-op');
 
   driver.close();
 }
@@ -1710,6 +1748,7 @@ async function runAll() {
   testContextQuery();
   testBuildPromptWithContext();
   testMigrationV05();
+  testMigrationV08();
   testCredentialFiltering();
   testGenericMemberFiltering();
   testCodeFenceStripping();

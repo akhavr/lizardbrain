@@ -42,7 +42,8 @@ CREATE TABLE IF NOT EXISTS members (
   preferences TEXT DEFAULT '',
   first_seen TEXT,
   last_seen TEXT,
-  updated_at TEXT DEFAULT (datetime('now'))
+  updated_at TEXT DEFAULT (datetime('now')),
+  superseded_by INTEGER
 );
 
 -- Facts: extracted knowledge claims
@@ -56,7 +57,8 @@ CREATE TABLE IF NOT EXISTS facts (
   message_date TEXT,
   source_agent TEXT DEFAULT NULL,
   conversation_id TEXT,
-  created_at TEXT DEFAULT (datetime('now'))
+  created_at TEXT DEFAULT (datetime('now')),
+  superseded_by INTEGER
 );
 
 -- Topics: discussion threads
@@ -68,7 +70,8 @@ CREATE TABLE IF NOT EXISTS topics (
   message_date TEXT,
   tags TEXT DEFAULT '',
   conversation_id TEXT,
-  created_at TEXT DEFAULT (datetime('now'))
+  created_at TEXT DEFAULT (datetime('now')),
+  superseded_by INTEGER
 );
 
 -- FTS5 indexes
@@ -147,7 +150,8 @@ CREATE TABLE IF NOT EXISTS decisions (
   source_agent TEXT DEFAULT NULL,
   conversation_id TEXT,
   created_at TEXT DEFAULT (datetime('now')),
-  updated_at TEXT
+  updated_at TEXT,
+  superseded_by INTEGER
 );
 
 -- Tasks: action items and assignments
@@ -163,7 +167,8 @@ CREATE TABLE IF NOT EXISTS tasks (
   source_agent TEXT DEFAULT NULL,
   conversation_id TEXT,
   created_at TEXT DEFAULT (datetime('now')),
-  updated_at TEXT
+  updated_at TEXT,
+  superseded_by INTEGER
 );
 
 -- Questions: asked and answered
@@ -178,7 +183,8 @@ CREATE TABLE IF NOT EXISTS questions (
   message_date TEXT,
   conversation_id TEXT,
   created_at TEXT DEFAULT (datetime('now')),
-  updated_at TEXT
+  updated_at TEXT,
+  superseded_by INTEGER
 );
 
 -- Events: meetings, deadlines, gatherings
@@ -192,7 +198,8 @@ CREATE TABLE IF NOT EXISTS events (
   tags TEXT DEFAULT '',
   message_date TEXT,
   conversation_id TEXT,
-  created_at TEXT DEFAULT (datetime('now'))
+  created_at TEXT DEFAULT (datetime('now')),
+  superseded_by INTEGER
 );
 
 -- FTS5 indexes: decisions, tasks, questions, events
@@ -339,7 +346,7 @@ function init(dbPath, { force = false, profile = 'knowledge' } = {}) {
   const { esc } = require('./driver');
   driver.write(`INSERT OR REPLACE INTO lizardbrain_meta (key, value, updated_at) VALUES ('profile_name', '${esc(profile)}', datetime('now'));`);
   driver.write(`INSERT OR REPLACE INTO lizardbrain_meta (key, value, updated_at) VALUES ('profile_entities', '${esc(profileConfig.entities.join(','))}', datetime('now'));`);
-  driver.write(`INSERT OR REPLACE INTO lizardbrain_meta (key, value, updated_at) VALUES ('schema_version', '0.7', datetime('now'));`);
+  driver.write(`INSERT OR REPLACE INTO lizardbrain_meta (key, value, updated_at) VALUES ('schema_version', '0.8', datetime('now'));`);
 
   driver.close();
 
@@ -356,9 +363,9 @@ function migrate(driver) {
   // Check current schema version
   const meta = driver.read("SELECT value FROM lizardbrain_meta WHERE key = 'schema_version'");
   const version = meta[0]?.value;
-  if (version >= '0.7') {
+  if (version >= '0.8') {
     applyIndexes(driver); // Ensure performance indexes exist (idempotent)
-    return { migrated: false, message: 'Already at v0.7' };
+    return { migrated: false, message: 'Already at v0.8' };
   }
 
   // Create new tables (IF NOT EXISTS makes this idempotent)
@@ -505,9 +512,20 @@ function migrate(driver) {
 
   driver.write("INSERT OR REPLACE INTO lizardbrain_meta (key, value, updated_at) VALUES ('schema_version', '0.7', datetime('now'));");
 
+  // v0.8 migration: superseded_by on all entity tables + total_superseded stat
+  const supersededTables = ['facts', 'topics', 'decisions', 'tasks', 'questions', 'events', 'members'];
+  for (const table of supersededTables) {
+    try { driver.write(`ALTER TABLE ${table} ADD COLUMN superseded_by INTEGER;`); }
+    catch (e) { /* column already exists */ }
+  }
+  try { driver.write('ALTER TABLE extraction_state ADD COLUMN total_superseded INTEGER DEFAULT 0;'); }
+  catch (e) { /* column already exists */ }
+
+  driver.write("INSERT OR REPLACE INTO lizardbrain_meta (key, value, updated_at) VALUES ('schema_version', '0.8', datetime('now'));");
+
   applyIndexes(driver); // Performance indexes (idempotent)
 
-  return { migrated: true, message: 'Migrated to v0.7 schema' };
+  return { migrated: true, message: 'Migrated to v0.8 schema' };
 }
 
 module.exports = { init, migrate, SCHEMA_SQL };
