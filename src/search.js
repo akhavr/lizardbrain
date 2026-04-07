@@ -56,7 +56,7 @@ function ftsSearch(driver, query, limit, conversationId) {
     `SELECT f.id, f.content, f.confidence, f.tags, f.category, m.display_name as member
      FROM facts f
      LEFT JOIN members m ON f.source_member_id = m.id
-     WHERE f.id IN (SELECT rowid FROM facts_fts WHERE facts_fts MATCH '${escapedQuery}') AND f.superseded_by IS NULL${convFilter}
+     WHERE f.id IN (SELECT rowid FROM facts_fts WHERE facts_fts MATCH '${escapedQuery}') AND f.superseded_by IS NULL AND (f.valid_until IS NULL OR f.valid_until >= datetime('now'))${convFilter}
      ORDER BY f.confidence DESC
      LIMIT ${limit}`
   );
@@ -266,7 +266,7 @@ function vecSearch(driver, queryEmbedding, limit, modelId, conversationId) {
         `SELECT f.id, f.content, f.confidence, f.tags, f.category, f.conversation_id, m.display_name as member
          FROM facts f
          LEFT JOIN members m ON f.source_member_id = m.id
-         WHERE f.id = ? AND f.superseded_by IS NULL`
+         WHERE f.id = ? AND f.superseded_by IS NULL AND (f.valid_until IS NULL OR f.valid_until >= datetime('now'))`
       ).get(row.fact_id);
       if (fact && (!conversationId || fact.conversation_id === conversationId)) {
         results.push({

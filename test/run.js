@@ -1323,6 +1323,72 @@ function testFactDurability() {
   driver.close();
 }
 
+function testExpiredFactFiltering() {
+  console.log('\n--- Test: expired fact filtering ---');
+
+  const db = path.join(TEST_DIR, 'expired.db');
+  if (fs.existsSync(db)) fs.unlinkSync(db);
+  lizardbrain.init(db, { profile: 'full' });
+  const driver = createDriver(db);
+  migrate(driver);
+
+  // Insert a fact with a past valid_until (already expired)
+  store.processExtraction(driver, {
+    members: [],
+    facts: [
+      { category: 'tool', content: 'Expired fact about old sprint blocker', tags: 'sprint,expired', confidence: 0.9, durability: 'ephemeral' },
+      { category: 'tool', content: 'Valid fact about PostgreSQL database usage', tags: 'database,valid', confidence: 0.9, durability: 'durable' },
+    ],
+    topics: [],
+  }, '2020-01-01');  // Far in the past — ephemeral fact already expired
+
+  // searchFacts should exclude expired
+  const results = store.searchFacts(driver, 'sprint OR database');
+  assert(results.length === 1, `searchFacts returns ${results.length} facts (expected 1, only non-expired)`);
+  assert(results[0].content.includes('PostgreSQL'), 'searchFacts returns only the valid fact');
+
+  // getActiveContext should exclude expired
+  const profiles = require('../src/profiles');
+  const ctx = store.getActiveContext(driver, profiles.getProfile('full'), { recencyDays: 99999 });
+  const hasExpired = ctx.facts?.some(f => f.content && f.content.includes('sprint'));
+  assert(!hasExpired, 'getActiveContext excludes expired facts');
+
+  // findContradictionCandidates should exclude expired
+  const candidates = store.findContradictionCandidates(driver, 'facts', 'Old sprint blocker is resolved', { maxCandidates: 5 });
+  const hasExpiredCandidate = candidates.some(c => c.content.includes('sprint'));
+  assert(!hasExpiredCandidate, 'findContradictionCandidates excludes expired facts');
+
+  driver.close();
+}
+
+async function testHybridSearchExcludesExpired() {
+  console.log('\n--- Test: hybrid search excludes expired ---');
+
+  const { search } = require('../src/search');
+
+  const db = path.join(TEST_DIR, 'search-expired.db');
+  if (fs.existsSync(db)) fs.unlinkSync(db);
+  lizardbrain.init(db, { profile: 'full' });
+  const driver = createDriver(db);
+  migrate(driver);
+
+  store.processExtraction(driver, {
+    members: [],
+    facts: [
+      { category: 'tool', content: 'Expired search fact about sprint velocity', tags: 'sprint', confidence: 0.9, durability: 'ephemeral' },
+      { category: 'tool', content: 'Valid search fact about sprint methodology', tags: 'sprint', confidence: 0.9, durability: 'durable' },
+    ],
+    topics: [],
+  }, '2020-01-01');  // Ephemeral already expired
+
+  const results = await search(driver, 'sprint', { limit: 10, ftsOnly: true });
+  const factResults = results.results.filter(r => r.source === 'fact');
+  assert(factResults.length === 1, `Hybrid search returns ${factResults.length} facts (expected 1)`);
+  assert(factResults[0].text.includes('methodology'), 'Hybrid search returns only valid fact');
+
+  driver.close();
+}
+
 function testSupersededFiltering() {
   console.log('\n--- Test: superseded filtering ---');
 
@@ -2117,6 +2183,8 @@ async function runAll() {
   testDurabilityInSchema();
   testDurabilityInPrompt();
   testFactDurability();
+  testExpiredFactFiltering();
+  await testHybridSearchExcludesExpired();
   testSupersededFiltering();
   testFindContradictionCandidates();
   testProcessExtractionInsertedIds();

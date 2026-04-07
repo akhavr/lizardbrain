@@ -376,6 +376,7 @@ function findContradictionCandidates(driver, entityType, content, options = {}) 
   const ftsQuery = esc(keywords.slice(0, 3).join(' OR '));
   let excludeClause = 'superseded_by IS NULL';
   if (excludeId) excludeClause += ` AND id != ${parseInt(excludeId)}`;
+  if (entityType === 'facts') excludeClause += " AND (valid_until IS NULL OR valid_until >= datetime('now'))";
 
   const results = driver.read(
     `SELECT id, ${fieldDef.textField} as content FROM ${entityType} WHERE id IN (SELECT rowid FROM ${fieldDef.ftsTable} WHERE ${fieldDef.ftsTable} MATCH '${ftsQuery}') AND ${excludeClause} ORDER BY created_at DESC LIMIT ${maxCandidates}`
@@ -415,7 +416,7 @@ function getActiveContext(driver, profileConfig, options = {}) {
   if (entities.includes('facts')) {
     const limit = maxItems.facts || 5;
     context.facts = driver.read(
-      `SELECT id, content, confidence FROM facts WHERE created_at >= datetime('now', '-${recencyDays} days') AND superseded_by IS NULL ORDER BY confidence DESC, created_at DESC LIMIT ${limit}`
+      `SELECT id, content, confidence FROM facts WHERE created_at >= datetime('now', '-${recencyDays} days') AND superseded_by IS NULL AND (valid_until IS NULL OR valid_until >= datetime('now')) ORDER BY confidence DESC, created_at DESC LIMIT ${limit}`
     );
   }
 
@@ -726,7 +727,7 @@ function getStats(driver) {
 
 function searchFacts(driver, query, limit = 15, minConfidence = 0) {
   const sanitized = esc(sanitizeFtsQuery(query));
-  let where = `f.id IN (SELECT rowid FROM facts_fts WHERE facts_fts MATCH '${sanitized}') AND f.superseded_by IS NULL`;
+  let where = `f.id IN (SELECT rowid FROM facts_fts WHERE facts_fts MATCH '${sanitized}') AND f.superseded_by IS NULL AND (f.valid_until IS NULL OR f.valid_until >= datetime('now'))`;
   if (minConfidence > 0) where += ` AND f.confidence >= ${minConfidence}`;
   return driver.read(
     `SELECT f.*, m.display_name as source FROM facts f LEFT JOIN members m ON f.source_member_id = m.id WHERE ${where} ORDER BY f.confidence DESC, f.created_at DESC LIMIT ${limit}`
