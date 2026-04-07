@@ -1267,6 +1267,77 @@ function testMigrationV10() {
   driver.close();
 }
 
+function testEntityLinks() {
+  console.log('\n--- Test: entity link CRUD ---');
+
+  const db = path.join(TEST_DIR, 'links.db');
+  if (fs.existsSync(db)) fs.unlinkSync(db);
+  lizardbrain.init(db, { profile: 'full' });
+  const driver = createDriver(db);
+  migrate(driver);
+
+  store.processExtraction(driver, {
+    members: [],
+    facts: [{ category: 'tool', content: 'We use PostgreSQL', tags: 'database', confidence: 0.9 }],
+    decisions: [{ description: 'Adopt PostgreSQL for production', status: 'agreed', tags: 'database' }],
+    tasks: [{ description: 'Set up PostgreSQL cluster', assignee: 'Alice', status: 'open', tags: 'database' }],
+    topics: [],
+  }, '2026-04-01');
+
+  const facts = driver.read('SELECT id FROM facts LIMIT 1');
+  const decisions = driver.read('SELECT id FROM decisions LIMIT 1');
+  const tasks = driver.read('SELECT id FROM tasks LIMIT 1');
+  const factId = facts[0].id;
+  const decisionId = decisions[0].id;
+  const taskId = tasks[0].id;
+
+  // addLink: create valid links
+  const linkId1 = store.addLink(driver, 'fact', factId, 'decision', decisionId, 'supports');
+  assert(typeof linkId1 === 'number', `addLink returns link ID (got ${linkId1})`);
+
+  const linkId2 = store.addLink(driver, 'task', taskId, 'decision', decisionId, 'implements');
+  assert(typeof linkId2 === 'number', `addLink returns second link ID (got ${linkId2})`);
+
+  // addLink: reject invalid type
+  const badType = store.addLink(driver, 'invalid', 1, 'fact', 1, 'supports');
+  assert(badType === false, 'addLink rejects invalid entity type');
+
+  // addLink: reject invalid relation
+  const badRelation = store.addLink(driver, 'fact', 1, 'decision', 1, 'destroys');
+  assert(badRelation === false, 'addLink rejects invalid relation');
+
+  // addLink: reject duplicate
+  const dup = store.addLink(driver, 'fact', factId, 'decision', decisionId, 'supports');
+  assert(dup === false, 'addLink rejects duplicate link');
+
+  // getLinks: both directions (default)
+  const allLinks = store.getLinks(driver, 'decision', decisionId);
+  assert(allLinks.length === 2, `getLinks returns ${allLinks.length} links (expected 2)`);
+
+  // getLinks: from direction only
+  const fromLinks = store.getLinks(driver, 'fact', factId, { direction: 'from' });
+  assert(fromLinks.length === 1, `getLinks from returns ${fromLinks.length} links (expected 1)`);
+  assert(fromLinks[0].to_type === 'decision', 'Link points to decision');
+  assert(fromLinks[0].relation === 'supports', 'Link relation is supports');
+
+  // getLinks: to direction only
+  const toLinks = store.getLinks(driver, 'decision', decisionId, { direction: 'to' });
+  assert(toLinks.length === 2, `getLinks to returns ${toLinks.length} links (expected 2)`);
+
+  // removeLink
+  const removed = store.removeLink(driver, linkId1);
+  assert(removed === true, 'removeLink returns true');
+
+  const afterRemove = store.getLinks(driver, 'decision', decisionId);
+  assert(afterRemove.length === 1, 'One link remaining after removal');
+
+  // removeLink: nonexistent
+  const removeBad = store.removeLink(driver, 99999);
+  assert(removeBad === false, 'removeLink returns false for nonexistent');
+
+  driver.close();
+}
+
 function testDurabilityInSchema() {
   console.log('\n--- Test: durability in extraction schema ---');
 
@@ -2214,6 +2285,7 @@ async function runAll() {
   testMigrationV08();
   testMigrationV09();
   testMigrationV10();
+  testEntityLinks();
   testDurabilityInSchema();
   testDurabilityInPrompt();
   testFactDurability();

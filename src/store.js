@@ -385,6 +385,62 @@ function findContradictionCandidates(driver, entityType, content, options = {}) 
   return results.map(r => ({ id: r.id, content: r.content }));
 }
 
+// --- Entity cross-references ---
+
+const VALID_LINK_TYPES = ['fact', 'topic', 'decision', 'task', 'question', 'event', 'member'];
+const VALID_RELATIONS = ['implements', 'supports', 'relates', 'blocks', 'answers'];
+
+function addLink(driver, fromType, fromId, toType, toId, relation) {
+  if (!VALID_LINK_TYPES.includes(fromType) || !VALID_LINK_TYPES.includes(toType)) return false;
+  if (!VALID_RELATIONS.includes(relation)) return false;
+
+  const fType = esc(fromType);
+  const fId = parseInt(fromId);
+  const tType = esc(toType);
+  const tId = parseInt(toId);
+  const rel = esc(relation);
+
+  // Check for duplicate before insert (driver.write swallows errors in both backends)
+  const existing = driver.read(
+    `SELECT id FROM entity_links WHERE from_type = '${fType}' AND from_id = ${fId} AND to_type = '${tType}' AND to_id = ${tId} AND relation = '${rel}'`
+  );
+  if (existing.length > 0) return false;
+
+  driver.write(`
+    INSERT INTO entity_links (from_type, from_id, to_type, to_id, relation)
+    VALUES ('${fType}', ${fId}, '${tType}', ${tId}, '${rel}');
+  `);
+  const last = driver.read('SELECT id FROM entity_links ORDER BY id DESC LIMIT 1');
+  return last.length > 0 ? last[0].id : false;
+}
+
+function removeLink(driver, linkId) {
+  const existing = driver.read(`SELECT id FROM entity_links WHERE id = ${parseInt(linkId)}`);
+  if (existing.length === 0) return false;
+  driver.write(`DELETE FROM entity_links WHERE id = ${parseInt(linkId)};`);
+  return true;
+}
+
+function getLinks(driver, entityType, entityId, options = {}) {
+  const { direction = 'both' } = options;
+  const id = parseInt(entityId);
+  const type = esc(entityType);
+
+  if (direction === 'from') {
+    return driver.read(
+      `SELECT * FROM entity_links WHERE from_type = '${type}' AND from_id = ${id} ORDER BY created_at DESC`
+    );
+  }
+  if (direction === 'to') {
+    return driver.read(
+      `SELECT * FROM entity_links WHERE to_type = '${type}' AND to_id = ${id} ORDER BY created_at DESC`
+    );
+  }
+  return driver.read(
+    `SELECT * FROM entity_links WHERE (from_type = '${type}' AND from_id = ${id}) OR (to_type = '${type}' AND to_id = ${id}) ORDER BY created_at DESC`
+  );
+}
+
 // --- Context query helpers ---
 
 function getActiveContext(driver, profileConfig, options = {}) {
@@ -819,6 +875,9 @@ module.exports = {
   updateQuestionAnswer,
   markSuperseded,
   findContradictionCandidates,
+  addLink,
+  removeLink,
+  getLinks,
   getKnownMemberNames,
   getActiveContext,
   formatContext,
