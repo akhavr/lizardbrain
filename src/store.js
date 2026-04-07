@@ -323,6 +323,15 @@ function updateQuestionAnswer(driver, id, answer, answeredBy) {
   return true;
 }
 
+function markSuperseded(driver, entityType, oldId, newId) {
+  const validTypes = ['facts', 'topics', 'decisions', 'tasks', 'questions', 'events', 'members'];
+  if (!validTypes.includes(entityType)) return false;
+  const existing = driver.read(`SELECT id FROM ${entityType} WHERE id = ${parseInt(oldId)}`);
+  if (existing.length === 0) return false;
+  driver.write(`UPDATE ${entityType} SET superseded_by = ${parseInt(newId)} WHERE id = ${parseInt(oldId)};`);
+  return true;
+}
+
 // --- Context query helpers ---
 
 function getActiveContext(driver, profileConfig, options = {}) {
@@ -333,35 +342,35 @@ function getActiveContext(driver, profileConfig, options = {}) {
   if (entities.includes('decisions')) {
     const limit = maxItems.decisions || 5;
     context.decisions = driver.read(
-      `SELECT id, description, status, context FROM decisions WHERE status IN ('proposed', 'agreed') ORDER BY created_at DESC LIMIT ${limit}`
+      `SELECT id, description, status, context FROM decisions WHERE status IN ('proposed', 'agreed') AND superseded_by IS NULL ORDER BY created_at DESC LIMIT ${limit}`
     );
   }
 
   if (entities.includes('tasks')) {
     const limit = maxItems.tasks || 10;
     context.tasks = driver.read(
-      `SELECT id, description, assignee, status FROM tasks WHERE status IN ('open', 'blocked') ORDER BY created_at DESC LIMIT ${limit}`
+      `SELECT id, description, assignee, status FROM tasks WHERE status IN ('open', 'blocked') AND superseded_by IS NULL ORDER BY created_at DESC LIMIT ${limit}`
     );
   }
 
   if (entities.includes('questions')) {
     const limit = maxItems.questions || 5;
     context.questions = driver.read(
-      `SELECT id, question, asker, status FROM questions WHERE status = 'open' ORDER BY created_at DESC LIMIT ${limit}`
+      `SELECT id, question, asker, status FROM questions WHERE status = 'open' AND superseded_by IS NULL ORDER BY created_at DESC LIMIT ${limit}`
     );
   }
 
   if (entities.includes('facts')) {
     const limit = maxItems.facts || 5;
     context.facts = driver.read(
-      `SELECT id, content, confidence FROM facts WHERE created_at >= datetime('now', '-${recencyDays} days') ORDER BY confidence DESC, created_at DESC LIMIT ${limit}`
+      `SELECT id, content, confidence FROM facts WHERE created_at >= datetime('now', '-${recencyDays} days') AND superseded_by IS NULL ORDER BY confidence DESC, created_at DESC LIMIT ${limit}`
     );
   }
 
   if (entities.includes('topics')) {
     const limit = maxItems.topics || 3;
     context.topics = driver.read(
-      `SELECT id, name FROM topics WHERE created_at >= datetime('now', '-${recencyDays} days') ORDER BY created_at DESC LIMIT ${limit}`
+      `SELECT id, name FROM topics WHERE created_at >= datetime('now', '-${recencyDays} days') AND superseded_by IS NULL ORDER BY created_at DESC LIMIT ${limit}`
     );
   }
 
@@ -653,7 +662,7 @@ function getStats(driver) {
 
 function searchFacts(driver, query, limit = 15, minConfidence = 0) {
   const sanitized = esc(sanitizeFtsQuery(query));
-  let where = `f.id IN (SELECT rowid FROM facts_fts WHERE facts_fts MATCH '${sanitized}')`;
+  let where = `f.id IN (SELECT rowid FROM facts_fts WHERE facts_fts MATCH '${sanitized}') AND f.superseded_by IS NULL`;
   if (minConfidence > 0) where += ` AND f.confidence >= ${minConfidence}`;
   return driver.read(
     `SELECT f.*, m.display_name as source FROM facts f LEFT JOIN members m ON f.source_member_id = m.id WHERE ${where} ORDER BY f.confidence DESC, f.created_at DESC LIMIT ${limit}`
@@ -663,14 +672,14 @@ function searchFacts(driver, query, limit = 15, minConfidence = 0) {
 function searchTopics(driver, query, limit = 10) {
   const sanitized = esc(sanitizeFtsQuery(query));
   return driver.read(
-    `SELECT * FROM topics WHERE id IN (SELECT rowid FROM topics_fts WHERE topics_fts MATCH '${sanitized}') ORDER BY created_at DESC LIMIT ${limit}`
+    `SELECT * FROM topics WHERE id IN (SELECT rowid FROM topics_fts WHERE topics_fts MATCH '${sanitized}') AND superseded_by IS NULL ORDER BY created_at DESC LIMIT ${limit}`
   );
 }
 
 function searchMembers(driver, query) {
   const sanitized = esc(sanitizeFtsQuery(query));
   return driver.read(
-    `SELECT * FROM members WHERE id IN (SELECT rowid FROM members_fts WHERE members_fts MATCH '${sanitized}')`
+    `SELECT * FROM members WHERE id IN (SELECT rowid FROM members_fts WHERE members_fts MATCH '${sanitized}') AND superseded_by IS NULL`
   );
 }
 
@@ -683,28 +692,28 @@ function whoKnows(driver, keyword) {
 function searchDecisions(driver, query, limit = 10) {
   const sanitized = esc(sanitizeFtsQuery(query));
   return driver.read(
-    `SELECT * FROM decisions WHERE id IN (SELECT rowid FROM decisions_fts WHERE decisions_fts MATCH '${sanitized}') ORDER BY created_at DESC LIMIT ${limit}`
+    `SELECT * FROM decisions WHERE id IN (SELECT rowid FROM decisions_fts WHERE decisions_fts MATCH '${sanitized}') AND superseded_by IS NULL ORDER BY created_at DESC LIMIT ${limit}`
   );
 }
 
 function searchTasks(driver, query, limit = 10) {
   const sanitized = esc(sanitizeFtsQuery(query));
   return driver.read(
-    `SELECT t.*, m.display_name as source FROM tasks t LEFT JOIN members m ON t.source_member_id = m.id WHERE t.id IN (SELECT rowid FROM tasks_fts WHERE tasks_fts MATCH '${sanitized}') ORDER BY t.created_at DESC LIMIT ${limit}`
+    `SELECT t.*, m.display_name as source FROM tasks t LEFT JOIN members m ON t.source_member_id = m.id WHERE t.id IN (SELECT rowid FROM tasks_fts WHERE tasks_fts MATCH '${sanitized}') AND t.superseded_by IS NULL ORDER BY t.created_at DESC LIMIT ${limit}`
   );
 }
 
 function searchQuestions(driver, query, limit = 10) {
   const sanitized = esc(sanitizeFtsQuery(query));
   return driver.read(
-    `SELECT * FROM questions WHERE id IN (SELECT rowid FROM questions_fts WHERE questions_fts MATCH '${sanitized}') ORDER BY created_at DESC LIMIT ${limit}`
+    `SELECT * FROM questions WHERE id IN (SELECT rowid FROM questions_fts WHERE questions_fts MATCH '${sanitized}') AND superseded_by IS NULL ORDER BY created_at DESC LIMIT ${limit}`
   );
 }
 
 function searchEvents(driver, query, limit = 10) {
   const sanitized = esc(sanitizeFtsQuery(query));
   return driver.read(
-    `SELECT * FROM events WHERE id IN (SELECT rowid FROM events_fts WHERE events_fts MATCH '${sanitized}') ORDER BY created_at DESC LIMIT ${limit}`
+    `SELECT * FROM events WHERE id IN (SELECT rowid FROM events_fts WHERE events_fts MATCH '${sanitized}') AND superseded_by IS NULL ORDER BY created_at DESC LIMIT ${limit}`
   );
 }
 
@@ -743,6 +752,7 @@ module.exports = {
   updateDecisionStatus,
   updateTaskStatus,
   updateQuestionAnswer,
+  markSuperseded,
   getKnownMemberNames,
   getActiveContext,
   formatContext,

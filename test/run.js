@@ -1207,6 +1207,67 @@ function testMigrationV08() {
   driver.close();
 }
 
+function testSupersededFiltering() {
+  console.log('\n--- Test: superseded filtering ---');
+
+  const db = path.join(TEST_DIR, 'superseded.db');
+  if (fs.existsSync(db)) fs.unlinkSync(db);
+  lizardbrain.init(db, { profile: 'full' });
+  const driver = createDriver(db);
+  migrate(driver);
+
+  // Insert two facts
+  store.processExtraction(driver, {
+    members: [],
+    facts: [
+      { category: 'tool', content: 'Team uses Postgres for the main database', tags: 'database', confidence: 0.9 },
+      { category: 'tool', content: 'Team migrated to MySQL for the main database', tags: 'database', confidence: 0.9 },
+    ],
+    topics: [],
+  }, '2026-04-01');
+
+  const allFacts = driver.read('SELECT id FROM facts ORDER BY id');
+  assert(allFacts.length === 2, 'Two facts inserted');
+  const oldId = allFacts[0].id;
+  const newId = allFacts[1].id;
+
+  // markSuperseded: old fact gets superseded_by = new fact id
+  store.markSuperseded(driver, 'facts', oldId, newId);
+
+  const old = driver.read(`SELECT superseded_by FROM facts WHERE id = ${oldId}`);
+  assert(old[0].superseded_by === newId, 'markSuperseded sets superseded_by on old entity');
+
+  // searchFacts should exclude superseded
+  const results = store.searchFacts(driver, 'database');
+  assert(results.length === 1, 'searchFacts excludes superseded facts');
+  assert(results[0].id === newId, 'searchFacts returns only the new fact');
+
+  // getActiveContext should exclude superseded
+  const ctx = store.getActiveContext(driver, profiles.getProfile('full'));
+  const supersededInCtx = ctx.facts?.some(f => f.id === oldId);
+  assert(!supersededInCtx, 'getActiveContext excludes superseded facts');
+
+  // Insert and supersede a decision
+  store.processExtraction(driver, {
+    members: [],
+    facts: [],
+    decisions: [
+      { description: 'Use REST for the API', status: 'agreed', tags: 'api' },
+      { description: 'Use GraphQL for the API instead of REST', status: 'agreed', tags: 'api' },
+    ],
+    topics: [],
+  }, '2026-04-01');
+
+  const allDecisions = driver.read('SELECT id FROM decisions ORDER BY id');
+  store.markSuperseded(driver, 'decisions', allDecisions[0].id, allDecisions[1].id);
+
+  const decResults = store.searchDecisions(driver, 'API');
+  assert(decResults.length === 1, 'searchDecisions excludes superseded');
+  assert(decResults[0].id === allDecisions[1].id, 'searchDecisions returns only new decision');
+
+  driver.close();
+}
+
 function testCredentialFiltering() {
   console.log('\n--- Test: credential filtering ---');
 
@@ -1749,6 +1810,7 @@ async function runAll() {
   testBuildPromptWithContext();
   testMigrationV05();
   testMigrationV08();
+  testSupersededFiltering();
   testCredentialFiltering();
   testGenericMemberFiltering();
   testCodeFenceStripping();
