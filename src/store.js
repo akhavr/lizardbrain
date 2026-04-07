@@ -469,7 +469,7 @@ function processExtraction(driver, extracted, messageDate, { sourceAgent = null,
   let totalFacts = 0, totalTopics = 0, totalMembers = 0;
   let totalDecisions = 0, totalTasks = 0, totalQuestions = 0, totalEvents = 0;
   const memberIdMap = {};
-  const insertedFactIds = [];
+  const insertedIds = { facts: [], topics: [], decisions: [], tasks: [], questions: [], events: [] };
 
   if (extracted.members && Array.isArray(extracted.members)) {
     for (const member of extracted.members) {
@@ -490,7 +490,7 @@ function processExtraction(driver, extracted, messageDate, { sourceAgent = null,
       if (insertFact(driver, fact, memberId, messageDate, sourceAgent, conversationId)) {
         totalFacts++;
         const lastFact = driver.read('SELECT id FROM facts ORDER BY id DESC LIMIT 1');
-        if (lastFact.length > 0) insertedFactIds.push(lastFact[0].id);
+        if (lastFact.length > 0) insertedIds.facts.push(lastFact[0].id);
       }
     }
   }
@@ -500,6 +500,8 @@ function processExtraction(driver, extracted, messageDate, { sourceAgent = null,
       if (!topic.name) continue;
       if (insertTopic(driver, topic, messageDate, conversationId)) {
         totalTopics++;
+        const lastTopic = driver.read('SELECT id FROM topics ORDER BY id DESC LIMIT 1');
+        if (lastTopic.length > 0) insertedIds.topics.push(lastTopic[0].id);
       }
     }
   }
@@ -509,6 +511,8 @@ function processExtraction(driver, extracted, messageDate, { sourceAgent = null,
       if (!decision.description) continue;
       if (insertDecision(driver, decision, messageDate, sourceAgent, conversationId)) {
         totalDecisions++;
+        const lastDecision = driver.read('SELECT id FROM decisions ORDER BY id DESC LIMIT 1');
+        if (lastDecision.length > 0) insertedIds.decisions.push(lastDecision[0].id);
       }
     }
   }
@@ -521,6 +525,8 @@ function processExtraction(driver, extracted, messageDate, { sourceAgent = null,
         : null;
       if (insertTask(driver, task, memberId, messageDate, sourceAgent, conversationId)) {
         totalTasks++;
+        const lastTask = driver.read('SELECT id FROM tasks ORDER BY id DESC LIMIT 1');
+        if (lastTask.length > 0) insertedIds.tasks.push(lastTask[0].id);
       }
     }
   }
@@ -530,6 +536,8 @@ function processExtraction(driver, extracted, messageDate, { sourceAgent = null,
       if (!question.question) continue;
       if (insertQuestion(driver, question, messageDate, conversationId)) {
         totalQuestions++;
+        const lastQuestion = driver.read('SELECT id FROM questions ORDER BY id DESC LIMIT 1');
+        if (lastQuestion.length > 0) insertedIds.questions.push(lastQuestion[0].id);
       }
     }
   }
@@ -539,6 +547,8 @@ function processExtraction(driver, extracted, messageDate, { sourceAgent = null,
       if (!event.name) continue;
       if (insertEvent(driver, event, messageDate, conversationId)) {
         totalEvents++;
+        const lastEvent = driver.read('SELECT id FROM events ORDER BY id DESC LIMIT 1');
+        if (lastEvent.length > 0) insertedIds.events.push(lastEvent[0].id);
       }
     }
   }
@@ -566,7 +576,7 @@ function processExtraction(driver, extracted, messageDate, { sourceAgent = null,
     }
   }
 
-  return { totalFacts, totalTopics, totalMembers, totalDecisions, totalTasks, totalQuestions, totalEvents, totalUpdated, insertedFactIds };
+  return { totalFacts, totalTopics, totalMembers, totalDecisions, totalTasks, totalQuestions, totalEvents, totalUpdated, insertedIds, insertedFactIds: insertedIds.facts };
 }
 
 /**

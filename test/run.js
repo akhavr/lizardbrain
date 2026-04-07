@@ -1320,6 +1320,42 @@ function testFindContradictionCandidates() {
   driver.close();
 }
 
+function testProcessExtractionInsertedIds() {
+  console.log('\n--- Test: processExtraction returns all inserted IDs ---');
+
+  const db = path.join(TEST_DIR, 'inserted-ids.db');
+  if (fs.existsSync(db)) fs.unlinkSync(db);
+  lizardbrain.init(db, { profile: 'full' });
+  const driver = createDriver(db);
+  migrate(driver);
+
+  const result = store.processExtraction(driver, {
+    members: [{ display_name: 'Alice', username: 'alice', expertise: 'Python' }],
+    facts: [
+      { category: 'tool', content: 'Fact one about testing', tags: 'test', confidence: 0.9 },
+      { category: 'tool', content: 'Fact two about debugging', tags: 'test', confidence: 0.8 },
+    ],
+    topics: [{ name: 'Testing strategies', summary: 'Discussion about testing', participants: 'Alice', tags: 'test' }],
+    decisions: [{ description: 'Use Jest for testing', status: 'agreed', tags: 'testing' }],
+    tasks: [{ description: 'Write unit tests', assignee: 'Alice', status: 'open', tags: 'testing' }],
+    questions: [{ question: 'Should we use TDD?', asker: 'Alice', status: 'open', tags: 'testing' }],
+    events: [{ name: 'Sprint planning', description: 'Plan sprint 5', tags: 'planning' }],
+  }, '2026-04-01');
+
+  assert(result.insertedIds !== undefined, 'processExtraction returns insertedIds');
+  assert(result.insertedIds.facts.length === 2, `insertedIds.facts has ${result.insertedIds.facts.length} entries (expected 2)`);
+  assert(result.insertedIds.topics.length === 1, `insertedIds.topics has ${result.insertedIds.topics.length} entries (expected 1)`);
+  assert(result.insertedIds.decisions.length === 1, `insertedIds.decisions has ${result.insertedIds.decisions.length} entries (expected 1)`);
+  assert(result.insertedIds.tasks.length === 1, `insertedIds.tasks has ${result.insertedIds.tasks.length} entries (expected 1)`);
+  assert(result.insertedIds.questions.length === 1, `insertedIds.questions has ${result.insertedIds.questions.length} entries (expected 1)`);
+  assert(result.insertedIds.events.length === 1, `insertedIds.events has ${result.insertedIds.events.length} entries (expected 1)`);
+
+  // Backward compat: insertedFactIds still works
+  assert(result.insertedFactIds.length === 2, 'insertedFactIds backward compat preserved');
+
+  driver.close();
+}
+
 function testCredentialFiltering() {
   console.log('\n--- Test: credential filtering ---');
 
@@ -1864,6 +1900,7 @@ async function runAll() {
   testMigrationV08();
   testSupersededFiltering();
   testFindContradictionCandidates();
+  testProcessExtractionInsertedIds();
   testCredentialFiltering();
   testGenericMemberFiltering();
   testCodeFenceStripping();
