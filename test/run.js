@@ -1356,6 +1356,38 @@ function testProcessExtractionInsertedIds() {
   driver.close();
 }
 
+function testCheckContradictionsExport() {
+  console.log('\n--- Test: checkContradictions export ---');
+
+  const llm = require('../src/llm');
+  assert(typeof llm.checkContradictions === 'function', 'checkContradictions is exported');
+  assert(typeof llm.buildContradictionPrompt === 'function', 'buildContradictionPrompt is exported');
+}
+
+function testBuildContradictionPrompt() {
+  console.log('\n--- Test: build contradiction prompt ---');
+
+  const { buildContradictionPrompt } = require('../src/llm');
+
+  const newEntities = [
+    { index: 0, content: 'Team migrated to MySQL' },
+    { index: 1, content: 'Deploy to GCP europe-west1' },
+  ];
+  const candidates = [
+    { id: 3, content: 'Team uses PostgreSQL for main database' },
+    { id: 7, content: 'Deploy to AWS us-east-1' },
+  ];
+
+  const prompt = buildContradictionPrompt(newEntities, candidates);
+  assert(prompt.includes('[new:0]'), 'Prompt includes new entity index 0');
+  assert(prompt.includes('[new:1]'), 'Prompt includes new entity index 1');
+  assert(prompt.includes('[id:3]'), 'Prompt includes candidate id 3');
+  assert(prompt.includes('[id:7]'), 'Prompt includes candidate id 7');
+  assert(prompt.includes('MySQL'), 'Prompt includes new entity content');
+  assert(prompt.includes('PostgreSQL'), 'Prompt includes candidate content');
+  assert(prompt.includes('superseded_ids'), 'Prompt mentions expected output format');
+}
+
 function testCredentialFiltering() {
   console.log('\n--- Test: credential filtering ---');
 
@@ -1901,6 +1933,8 @@ async function runAll() {
   testSupersededFiltering();
   testFindContradictionCandidates();
   testProcessExtractionInsertedIds();
+  testCheckContradictionsExport();
+  testBuildContradictionPrompt();
   testCredentialFiltering();
   testGenericMemberFiltering();
   testCodeFenceStripping();

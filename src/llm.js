@@ -278,6 +278,61 @@ function buildExtractionSchema(entities, hasContext) {
   return z.object(shape);
 }
 
+// --- Contradiction detection ---
+
+const contradictionSchema = z.object({
+  contradictions: z.array(z.object({
+    new_index: z.number(),
+    superseded_ids: z.array(z.number()),
+  })),
+});
+
+function buildContradictionPrompt(newEntities, candidates) {
+  const newLines = newEntities.map(e => `  [new:${e.index}] ${e.content}`).join('\n');
+  const existingLines = candidates.map(c => `  [id:${c.id}] ${c.content}`).join('\n');
+
+  return `Given NEW entities and EXISTING entities of the same type, identify which existing entities are contradicted or superseded by a new one.
+
+A contradiction means the new entity makes the old one FACTUALLY WRONG or OBSOLETE — not merely related, complementary, or a different perspective.
+
+NEW ENTITIES:
+${newLines}
+
+EXISTING ENTITIES:
+${existingLines}
+
+Return JSON: { "contradictions": [{ "new_index": 0, "superseded_ids": [3] }] }
+Only include entries where a new entity genuinely contradicts or replaces an old one.
+Return { "contradictions": [] } if nothing is contradicted.`;
+}
+
+/**
+ * Ask LLM to identify contradictions between new entities and candidates.
+ *
+ * @param {Array<{index: number, content: string}>} newEntities
+ * @param {Array<{id: number, content: string}>} candidates
+ * @param {object} config - LLM config (apiKey, baseUrl, model)
+ * @returns {Promise<Array<{new_index: number, superseded_ids: number[]}>>}
+ */
+async function checkContradictions(newEntities, candidates, config) {
+  if (!candidates.length || !newEntities.length) return [];
+
+  const provider = createProvider(config);
+  const prompt = buildContradictionPrompt(newEntities, candidates);
+
+  const result = await generateText({
+    model: provider(config.model),
+    system: 'You identify contradictions between knowledge entities. Always respond with valid JSON only.',
+    prompt,
+    output: Output.object({ schema: contradictionSchema }),
+    temperature: 0.1,
+    maxTokens: 256,
+    maxRetries: 2,
+  });
+
+  return result.output?.contradictions || [];
+}
+
 // --- Provider selection ---
 
 /**
@@ -490,4 +545,4 @@ async function extractFromText(text, config, profileConfig) {
   return result;
 }
 
-module.exports = { extract, extractWithRetry, extractFromText, buildPrompt, formatMessages, isAnthropic, buildExtractionSchema, createProvider, repairJson, EXTRACTION_PROMPT };
+module.exports = { extract, extractWithRetry, extractFromText, buildPrompt, formatMessages, isAnthropic, buildExtractionSchema, createProvider, repairJson, EXTRACTION_PROMPT, checkContradictions, buildContradictionPrompt };
