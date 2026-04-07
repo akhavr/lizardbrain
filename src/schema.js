@@ -299,6 +299,7 @@ CREATE TABLE IF NOT EXISTS extraction_state (
   total_questions_extracted INTEGER DEFAULT 0,
   total_events_extracted INTEGER DEFAULT 0,
   total_updates_applied INTEGER DEFAULT 0,
+  total_superseded INTEGER DEFAULT 0,
   total_members_seen INTEGER DEFAULT 0,
   last_run_at TEXT,
   created_at TEXT DEFAULT (datetime('now'))
