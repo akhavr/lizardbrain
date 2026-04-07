@@ -650,7 +650,7 @@ function getState(driver) {
 }
 
 function updateState(driver, { lastProcessedId, messagesProcessed, factsExtracted, topicsExtracted,
-  decisionsExtracted = 0, tasksExtracted = 0, questionsExtracted = 0, eventsExtracted = 0, updatesApplied = 0 }) {
+  decisionsExtracted = 0, tasksExtracted = 0, questionsExtracted = 0, eventsExtracted = 0, updatesApplied = 0, totalSuperseded = 0 }) {
   driver.write(`
     UPDATE extraction_state SET
       last_processed_id = '${esc(String(lastProcessedId))}',
@@ -662,6 +662,7 @@ function updateState(driver, { lastProcessedId, messagesProcessed, factsExtracte
       total_questions_extracted = total_questions_extracted + ${questionsExtracted},
       total_events_extracted = total_events_extracted + ${eventsExtracted},
       total_updates_applied = total_updates_applied + ${updatesApplied},
+      total_superseded = total_superseded + ${totalSuperseded},
       total_members_seen = (SELECT COUNT(*) FROM members),
       last_run_at = datetime('now')
     WHERE id = 1;
@@ -705,6 +706,7 @@ function getStats(driver) {
     questions: parseInt(questions[0]?.c) || 0,
     events: parseInt(events[0]?.c) || 0,
     messagesProcessed: parseInt(state?.total_messages_processed) || 0,
+    superseded: parseInt(state?.total_superseded) || 0,
     lastProcessedId: state?.last_processed_id || '0',
     lastRun: state?.last_run_at || 'never',
     profile,

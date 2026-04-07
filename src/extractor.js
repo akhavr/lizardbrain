@@ -127,7 +127,7 @@ async function run(adapter, driver, config, options = {}) {
 
   let totalFacts = 0, totalTopics = 0, totalMembers = 0, embedded = 0;
   let totalDecisions = 0, totalTasks = 0, totalQuestions = 0, totalEvents = 0;
-  let totalUpdated = 0;
+  let totalUpdated = 0, totalSuperseded = 0;
   let maxId = lastId;
 
   for (let i = 0; i < batches.length; i++) {
@@ -193,6 +193,75 @@ async function run(adapter, driver, config, options = {}) {
         }
       }
 
+      // Contradiction detection: if enabled, check new entities against existing
+      if (config.contradiction?.enabled && !dryRun) {
+        try {
+          const llmConfig = {
+            ...config.llm,
+            maxRetries: 2,
+          };
+          let batchSuperseded = 0;
+
+          for (const [entityType, ids] of Object.entries(result.insertedIds)) {
+            if (ids.length === 0) continue;
+
+            // Build new entity list with content
+            const contentField = entityType === 'facts' ? 'content'
+              : entityType === 'topics' ? 'name'
+              : entityType === 'decisions' ? 'description'
+              : entityType === 'tasks' ? 'description'
+              : entityType === 'questions' ? 'question'
+              : entityType === 'events' ? 'name'
+              : 'display_name';
+            const newRows = driver.read(
+              `SELECT id, ${contentField} as content FROM ${entityType} WHERE id IN (${ids.join(',')})`
+            );
+            if (newRows.length === 0) continue;
+
+            // Find candidates for all new entities combined
+            const allCandidateIds = new Set();
+            const allCandidates = [];
+            for (const row of newRows) {
+              const candidates = store.findContradictionCandidates(driver, entityType, row.content, {
+                maxCandidates: config.contradiction.maxCandidates || 5,
+                excludeId: row.id,
+              });
+              for (const c of candidates) {
+                if (!allCandidateIds.has(c.id)) {
+                  allCandidateIds.add(c.id);
+                  allCandidates.push(c);
+                }
+              }
+            }
+
+            if (allCandidates.length === 0) continue;
+
+            // LLM judgment: one call per entity type
+            const newEntities = newRows.map((r, i) => ({ index: i, content: r.content }));
+            const contradictions = await llm.checkContradictions(newEntities, allCandidates, llmConfig);
+
+            // Apply superseding
+            for (const c of contradictions) {
+              const newRow = newRows[c.new_index];
+              if (!newRow) continue;
+              for (const oldId of c.superseded_ids) {
+                if (allCandidateIds.has(oldId)) {
+                  store.markSuperseded(driver, entityType, oldId, newRow.id);
+                  batchSuperseded++;
+                }
+              }
+            }
+          }
+
+          if (batchSuperseded > 0) {
+            log(`  Contradictions: ${batchSuperseded} entity(ies) superseded`);
+            totalSuperseded += batchSuperseded;
+          }
+        } catch (err) {
+          log(`  Contradiction check failed (non-fatal): ${err.message}`);
+        }
+      }
+
       totalFacts += result.totalFacts;
       totalTopics += result.totalTopics;
       totalMembers += result.totalMembers;
@@ -240,6 +309,7 @@ async function run(adapter, driver, config, options = {}) {
       questionsExtracted: totalQuestions,
       eventsExtracted: totalEvents,
       updatesApplied: totalUpdated,
+      totalSuperseded,
     });
   }
 
@@ -278,6 +348,7 @@ async function run(adapter, driver, config, options = {}) {
     questions: totalQuestions,
     events: totalEvents,
     updated: totalUpdated,
+    superseded: totalSuperseded,
     embedded,
     maxId,
     dryRun,
@@ -290,6 +361,7 @@ async function run(adapter, driver, config, options = {}) {
   if (totalQuestions) doneParts.push(`${totalQuestions} questions`);
   if (totalEvents) doneParts.push(`${totalEvents} events`);
   if (totalUpdated) doneParts.push(`${totalUpdated} updates`);
+  if (totalSuperseded) doneParts.push(`${totalSuperseded} superseded`);
   log(`\nDone: ${messages.length} messages → ${doneParts.join(', ')}`);
   if (dryRun) log('[DRY RUN — nothing written]');
 

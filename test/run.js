@@ -1388,6 +1388,40 @@ function testBuildContradictionPrompt() {
   assert(prompt.includes('superseded_ids'), 'Prompt mentions expected output format');
 }
 
+function testContradictionConfigGating() {
+  console.log('\n--- Test: contradiction config gating ---');
+
+  const db = path.join(TEST_DIR, 'contradiction-config.db');
+  if (fs.existsSync(db)) fs.unlinkSync(db);
+  lizardbrain.init(db, { profile: 'full' });
+  const driver = createDriver(db);
+  migrate(driver);
+
+  // Insert conflicting facts without contradiction enabled
+  store.processExtraction(driver, {
+    members: [],
+    facts: [
+      { category: 'tool', content: 'Team uses Postgres for production', tags: 'database', confidence: 0.9 },
+    ],
+    topics: [],
+  }, '2026-04-01');
+
+  store.processExtraction(driver, {
+    members: [],
+    facts: [
+      { category: 'tool', content: 'Team switched from Postgres to MySQL for production', tags: 'database', confidence: 0.9 },
+    ],
+    topics: [],
+  }, '2026-04-02');
+
+  // Without contradiction config, no superseding should happen
+  const facts = driver.read('SELECT id, superseded_by FROM facts');
+  const anySuperseded = facts.some(f => f.superseded_by !== null);
+  assert(!anySuperseded, 'No facts superseded when contradiction detection is disabled');
+
+  driver.close();
+}
+
 function testCredentialFiltering() {
   console.log('\n--- Test: credential filtering ---');
 
@@ -1935,6 +1969,7 @@ async function runAll() {
   testProcessExtractionInsertedIds();
   testCheckContradictionsExport();
   testBuildContradictionPrompt();
+  testContradictionConfigGating();
   testCredentialFiltering();
   testGenericMemberFiltering();
   testCodeFenceStripping();
