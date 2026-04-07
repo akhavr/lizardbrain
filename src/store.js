@@ -742,7 +742,7 @@ function searchMembers(driver, query) {
 
 function whoKnows(driver, keyword) {
   return driver.read(
-    `SELECT display_name, username, expertise, projects FROM members WHERE expertise LIKE '%${esc(keyword)}%' OR projects LIKE '%${esc(keyword)}%' ORDER BY last_seen DESC`
+    `SELECT display_name, username, expertise, projects FROM members WHERE (expertise LIKE '%${esc(keyword)}%' OR projects LIKE '%${esc(keyword)}%') AND superseded_by IS NULL ORDER BY last_seen DESC`
   );
 }
 

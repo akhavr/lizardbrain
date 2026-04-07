@@ -100,6 +100,7 @@ async function main() {
       if (stats.tasks > 0) console.log(`Tasks:    ${stats.tasks}`);
       if (stats.questions > 0) console.log(`Questions: ${stats.questions}`);
       if (stats.events > 0) console.log(`Events:   ${stats.events}`);
+      if (stats.superseded > 0) console.log(`Superseded: ${stats.superseded}`);
       console.log(`\nDriver:   ${stats.driver}${stats.vectors ? ' (vectors enabled)' : ''}`);
       console.log(`Search:   ${stats.vectors ? 'hybrid (FTS5 + kNN + RRF)' : 'FTS5'}`);
 

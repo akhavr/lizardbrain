@@ -266,7 +266,7 @@ function vecSearch(driver, queryEmbedding, limit, modelId, conversationId) {
         `SELECT f.id, f.content, f.confidence, f.tags, f.category, f.conversation_id, m.display_name as member
          FROM facts f
          LEFT JOIN members m ON f.source_member_id = m.id
-         WHERE f.id = ?`
+         WHERE f.id = ? AND f.superseded_by IS NULL`
       ).get(row.fact_id);
       if (fact && (!conversationId || fact.conversation_id === conversationId)) {
         results.push({
@@ -301,7 +301,7 @@ function vecSearch(driver, queryEmbedding, limit, modelId, conversationId) {
       if (count >= limit) break;
       if (modelFilter && !modelFilter.has(row.topic_id)) continue;
       const topic = db.prepare(
-        `SELECT id, name, summary, tags, participants, conversation_id FROM topics WHERE id = ?`
+        `SELECT id, name, summary, tags, participants, conversation_id FROM topics WHERE id = ? AND superseded_by IS NULL`
       ).get(row.topic_id);
       if (topic && (!conversationId || topic.conversation_id === conversationId)) {
         results.push({
@@ -334,7 +334,7 @@ function vecSearch(driver, queryEmbedding, limit, modelId, conversationId) {
       if (count >= limit) break;
       if (modelFilter && !modelFilter.has(row.member_id)) continue;
       const member = db.prepare(
-        `SELECT id, display_name, username, expertise, projects FROM members WHERE id = ?`
+        `SELECT id, display_name, username, expertise, projects FROM members WHERE id = ? AND superseded_by IS NULL`
       ).get(row.member_id);
       if (member) {
         results.push({
@@ -367,7 +367,7 @@ function vecSearch(driver, queryEmbedding, limit, modelId, conversationId) {
       if (count >= limit) break;
       if (modelFilter && !modelFilter.has(row.decision_id)) continue;
       const decision = db.prepare(
-        `SELECT id, description, context, participants, status, tags, conversation_id FROM decisions WHERE id = ?`
+        `SELECT id, description, context, participants, status, tags, conversation_id FROM decisions WHERE id = ? AND superseded_by IS NULL`
       ).get(row.decision_id);
       if (decision && (!conversationId || decision.conversation_id === conversationId)) {
         results.push({
@@ -403,7 +403,7 @@ function vecSearch(driver, queryEmbedding, limit, modelId, conversationId) {
       if (modelFilter && !modelFilter.has(row.task_id)) continue;
       const task = db.prepare(
         `SELECT t.id, t.description, t.assignee, t.status, t.tags, t.conversation_id, m.display_name as member
-         FROM tasks t LEFT JOIN members m ON t.source_member_id = m.id WHERE t.id = ?`
+         FROM tasks t LEFT JOIN members m ON t.source_member_id = m.id WHERE t.id = ? AND t.superseded_by IS NULL`
       ).get(row.task_id);
       if (task && (!conversationId || task.conversation_id === conversationId)) {
         results.push({
@@ -438,7 +438,7 @@ function vecSearch(driver, queryEmbedding, limit, modelId, conversationId) {
       if (count >= limit) break;
       if (modelFilter && !modelFilter.has(row.question_id)) continue;
       const question = db.prepare(
-        `SELECT id, question, asker, answer, answered_by, status, tags, conversation_id FROM questions WHERE id = ?`
+        `SELECT id, question, asker, answer, answered_by, status, tags, conversation_id FROM questions WHERE id = ? AND superseded_by IS NULL`
       ).get(row.question_id);
       if (question && (!conversationId || question.conversation_id === conversationId)) {
         results.push({
@@ -474,7 +474,7 @@ function vecSearch(driver, queryEmbedding, limit, modelId, conversationId) {
       if (count >= limit) break;
       if (modelFilter && !modelFilter.has(row.event_id)) continue;
       const event = db.prepare(
-        `SELECT id, name, description, event_date, location, attendees, tags, conversation_id FROM events WHERE id = ?`
+        `SELECT id, name, description, event_date, location, attendees, tags, conversation_id FROM events WHERE id = ? AND superseded_by IS NULL`
       ).get(row.event_id);
       if (event && (!conversationId || event.conversation_id === conversationId)) {
         results.push({
