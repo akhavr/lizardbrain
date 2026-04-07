@@ -1338,6 +1338,55 @@ function testEntityLinks() {
   driver.close();
 }
 
+function testLinkExtractionSchema() {
+  console.log('\n--- Test: link extraction schema ---');
+
+  const { buildExtractionSchema } = require('../src/llm');
+
+  // With context: schema should include links
+  const schema = buildExtractionSchema(['members', 'facts', 'decisions', 'tasks'], true);
+  const shape = schema.shape;
+  assert('links' in shape, 'Schema with context includes links');
+
+  // Validate link data
+  const testData = {
+    members: [],
+    facts: [],
+    decisions: [],
+    tasks: [],
+    updates: null,
+    links: [{ from: 'decision:3', to: 'task:new:0', relation: 'implements' }],
+  };
+  const result = schema.safeParse(testData);
+  assert(result.success, 'Schema validates link data');
+
+  // Null links accepted
+  const nullLinks = { members: [], facts: [], decisions: [], tasks: [], updates: null, links: null };
+  const nullResult = schema.safeParse(nullLinks);
+  assert(nullResult.success, 'Schema accepts null links');
+
+  // Multiple entity types without context: schema should include links
+  const noCtx = buildExtractionSchema(['facts', 'decisions'], false);
+  assert('links' in noCtx.shape, 'Schema includes links when multiple entity types');
+
+  // Single entity type without context: no links
+  const single = buildExtractionSchema(['facts'], false);
+  assert(!('links' in single.shape), 'Schema excludes links with single entity type');
+}
+
+function testLinkPromptRules() {
+  console.log('\n--- Test: link prompt rules ---');
+
+  const { buildPrompt } = require('../src/llm');
+  const { getProfile } = require('../src/profiles');
+
+  const profileConfig = getProfile('team');
+  const prompt = buildPrompt('test messages', profileConfig, { contextSection: 'some context' });
+  assert(prompt.includes('"links"'), 'Prompt with context includes links schema');
+  assert(prompt.includes('Link rules'), 'Prompt with context includes link rules');
+  assert(prompt.includes('type:new:index'), 'Prompt includes new entity reference format');
+}
+
 function testDurabilityInSchema() {
   console.log('\n--- Test: durability in extraction schema ---');
 
@@ -1348,6 +1397,7 @@ function testDurabilityInSchema() {
     members: [],
     facts: [{ category: 'tool', content: 'Test fact', source_member: null, tags: null, confidence: 0.9, durability: 'ephemeral' }],
     topics: [],
+    links: null,
   };
   const result = schema.safeParse(testData);
   assert(result.success, 'Schema accepts durability field on facts');
@@ -1356,6 +1406,7 @@ function testDurabilityInSchema() {
     members: [],
     facts: [{ category: 'tool', content: 'Test fact', source_member: null, tags: null, confidence: 0.9, durability: null }],
     topics: [],
+    links: null,
   };
   const nullResult = schema.safeParse(nullData);
   assert(nullResult.success, 'Schema accepts null durability');
@@ -1364,6 +1415,7 @@ function testDurabilityInSchema() {
     members: [],
     facts: [{ category: 'tool', content: 'Test fact', source_member: null, tags: null, confidence: 0.9 }],
     topics: [],
+    links: null,
   };
   const missingResult = schema.safeParse(missingData);
   assert(missingResult.success, 'Schema accepts facts without durability field');
@@ -2014,13 +2066,13 @@ function testBuildExtractionSchema() {
   const noUpdatable = buildExtractionSchema(['members', 'facts', 'topics'], true);
   assert(!('updates' in noUpdatable.shape), 'no updates when no updatable entities');
 
-  // Schema validates correct data
-  const testData = { members: [{ username: null, display_name: 'Alice', expertise: 'Python', projects: null }], facts: [], topics: [] };
+  // Schema validates correct data (links included since entities.length > 1)
+  const testData = { members: [{ username: null, display_name: 'Alice', expertise: 'Python', projects: null }], facts: [], topics: [], links: null };
   const result = knowledgeSchema.safeParse(testData);
   assert(result.success, 'schema validates correct extraction data');
 
   // Schema accepts null arrays (LLM may return null for empty arrays)
-  const nullArrays = { members: null, facts: null, topics: null };
+  const nullArrays = { members: null, facts: null, topics: null, links: null };
   const nullResult = knowledgeSchema.safeParse(nullArrays);
   assert(nullResult.success, 'schema accepts null arrays');
 }
@@ -2286,6 +2338,8 @@ async function runAll() {
   testMigrationV09();
   testMigrationV10();
   testEntityLinks();
+  testLinkExtractionSchema();
+  testLinkPromptRules();
   testDurabilityInSchema();
   testDurabilityInPrompt();
   testFactDurability();

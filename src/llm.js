@@ -99,6 +99,17 @@ function buildPrompt(formattedMessages, profileConfig, options = {}) {
     if (updateSchema) schemaFragments.push(updateSchema);
   }
 
+  // Add links schema if context or multiple entities
+  if (contextSection || entities.length > 1) {
+    schemaFragments.push(`  "links": [
+    {
+      "from": "type:id or type:new:index",
+      "to": "type:id or type:new:index",
+      "relation": "one of: implements, supports, relates, blocks, answers"
+    }
+  ]`);
+  }
+
   // Build rules with only enabled entities
   const rulesFragments = [];
   for (const entity of entities) {
@@ -127,6 +138,16 @@ function buildPrompt(formattedMessages, profileConfig, options = {}) {
 - Only update status when the conversation EXPLICITLY confirms a change (e.g., "we agreed on X", "task Y is done", "the answer to Z is...")
 - Do not update entities that are not mentioned in the current messages
 - If unsure whether something is an update or a new entity, create a new entity`);
+  }
+
+  // Add link rules
+  if (contextSection || entities.length > 1) {
+    rulesFragments.push(`Link rules:
+- Reference existing entities by type:id (e.g. "decision:3", "task:7")
+- Reference new entities from this batch by type:new:index (e.g. "task:new:0", "fact:new:1")
+- Only create links when there is a clear, explicit relationship
+- Do not link entities that are merely mentioned in the same message
+- Valid relation types: implements, supports, relates, blocks, answers`);
   }
 
   // Build context blocks
@@ -276,10 +297,23 @@ function buildExtractionSchema(entities, hasContext) {
     }
   }
 
+  // Add links when context is present or multiple entity types allow same-batch linking
+  if (hasContext || entities.length > 1) {
+    shape.links = z.array(linkSchema).nullable();
+  }
+
   return z.object(shape);
 }
 
 // --- Contradiction detection ---
+
+// --- Entity cross-reference links ---
+
+const linkSchema = z.object({
+  from: z.string(),
+  to: z.string(),
+  relation: z.enum(['implements', 'supports', 'relates', 'blocks', 'answers']),
+});
 
 const contradictionSchema = z.object({
   contradictions: z.array(z.object({
