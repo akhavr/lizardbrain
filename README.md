@@ -3,7 +3,7 @@
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Node.js >= 18](https://img.shields.io/badge/node-%3E%3D18-brightgreen.svg)](https://nodejs.org)
-[![Version](https://img.shields.io/badge/version-0.10.0-orange.svg)](package.json)
+[![Version](https://img.shields.io/badge/version-1.0.0-orange.svg)](package.json)
 
 Your team's conversations have years of knowledge buried in thousands of messages -- chats, meetings, support threads. Who knows what, what was decided, what tasks were assigned, what questions were answered -- it's all there, but impossible to find.
 
@@ -74,14 +74,14 @@ Depending on your profile, LizardBrain pulls out up to 7 types of structured kno
 | Entity | What it captures | Example |
 |--------|-----------------|---------|
 | **Members** | Who's in the chat, what they know, what they work on | Alice -- RAG, LangChain \| builds: pipeline |
-| **Facts** | Claims, insights, recommendations with confidence scores | "LangChain works well with chunk size 512" (0.9) |
+| **Facts** | Claims, insights, recommendations with confidence scores and temporal validity | "LangChain works well with chunk size 512" (0.9, durable) |
 | **Topics** | Discussion threads with summaries | "RAG Pipeline Comparison" -- Alice, Bob |
 | **Decisions** | What was decided, by whom, and why | "Use PostgreSQL instead of MySQL" (agreed) |
 | **Tasks** | Action items with assignees and deadlines | "Migrate user service" -- Bob, due Apr 15 |
 | **Questions** | Questions asked and answers given | "Best way to handle migrations?" -- answered |
 | **Events** | Meetings, deadlines, gatherings | "Architecture Review" -- Apr 1, Zoom |
 
-Everything is deduplicated automatically -- first via FTS keyword matching, then via embedding similarity (kNN). Even rephrased duplicates are caught.
+Everything is deduplicated automatically -- first via FTS keyword matching, then via embedding similarity (kNN). Contradictions are detected and old facts superseded. Expired facts drop out of search. Even rephrased duplicates are caught.
 
 ### Entity updates
 
@@ -110,13 +110,70 @@ No manual intervention needed. The LLM references entity IDs from context and ou
 
 **Context-aware.** The LLM sees existing knowledge from previous runs. Decisions get confirmed, tasks get closed, questions get answered -- entities evolve naturally across extraction runs.
 
+**Contradiction-safe.** When new information contradicts existing knowledge ("Team uses Postgres" → "Team migrated to MySQL"), the old fact is automatically superseded. Your agent never sees outdated info.
+
+**Temporally aware.** Sprint goals expire after 30 days, standup notes after 7 — each fact gets a durability tier and drops out of search when it's no longer valid.
+
+**Cross-referenced.** Entities link to each other — a task implements a decision, a fact supports another fact. The LLM creates typed relationships during extraction, and agents can query the graph.
+
 **Links get context.** When someone shares a GitHub repo or web page, LizardBrain fetches metadata (stars, descriptions, titles) before sending to the LLM, so extracted facts are richer.
 
 **Built for agents.** Generate a compact member roster (~30 tokens per person) designed to fit in an agent's system prompt. At 100 members, that's ~3,000 tokens.
 
-**MCP server built in.** Run `lizardbrain serve` and any MCP-compatible client (Claude Desktop, Cursor, custom agents) can read, search, and write knowledge directly. No shell-outs, no parsing CLI output — agents talk to LizardBrain over the Model Context Protocol.
+**MCP server built in.** Run `lizardbrain serve` and any MCP-compatible client (Claude Desktop, Cursor, custom agents) can read, search, and write knowledge directly. 9 tools including entity link management. No shell-outs, no parsing CLI output — agents talk to LizardBrain over the Model Context Protocol.
 
 ---
+
+## v1.0 features
+
+<details>
+<summary>Contradiction detection (v0.11)</summary>
+
+After inserting entities, LizardBrain finds similar existing ones via FTS (with kNN fallback) and asks the LLM "do any of these contradict?" If they do, the old entity is marked with `superseded_by` and automatically excluded from search and context.
+
+- Opt-in via `contradiction.enabled` in config
+- Works across all 7 entity types
+- Non-fatal — extraction continues if the LLM call fails
+
+```json
+{
+  "contradiction": { "enabled": true }
+}
+```
+
+</details>
+
+<details>
+<summary>Temporal validity (v0.12)</summary>
+
+The LLM assigns a durability to each fact during extraction: `ephemeral` (7d), `short` (30d), `medium` (90d), or `durable` (permanent). The system computes a `valid_until` date and expired facts are filtered from search and context automatically.
+
+- Zero config — defaults to `durable` (backward-compatible)
+- Facts only — other entity types already have lifecycle management
+
+Example:
+```
+"Sprint 14 goals are X, Y, Z"  →  durability: short (30 days)
+"PostgreSQL supports JSONB"     →  durability: durable (permanent)
+```
+
+</details>
+
+<details>
+<summary>Entity cross-references (v1.0)</summary>
+
+New `entity_links` junction table with directional, typed relationships between any two entities. Link types: `implements`, `supports`, `relates`, `blocks`, `answers`.
+
+The LLM creates links during extraction by referencing existing entity IDs from context injection and same-batch entities via `type:new:index` notation. MCP exposes `add_link` and `get_links` tools.
+
+```
+# Agent can query the relationship graph
+get_links({ entity_type: "decision", entity_id: 5 })
+→ task #12 implements decision #5
+→ fact #47 supports decision #5
+```
+
+</details>
 
 ## v0.10 features
 
@@ -182,7 +239,7 @@ Replaced raw `fetch()` calls with the [Vercel AI SDK](https://sdk.vercel.ai/) (`
 <details>
 <summary>MCP server</summary>
 
-Run `lizardbrain serve` and any MCP-compatible client (Claude Desktop, Cursor, custom agents) can read, search, and write knowledge directly. 7 tools: `get_context`, `search`, `who_knows`, `get_stats`, `add_knowledge`, `ingest`, `update_entity`.
+Run `lizardbrain serve` and any MCP-compatible client (Claude Desktop, Cursor, custom agents) can read, search, and write knowledge directly. 9 tools: `get_context`, `search`, `who_knows`, `get_stats`, `get_links`, `add_knowledge`, `ingest`, `update_entity`, `add_link`.
 
 </details>
 
@@ -618,7 +675,7 @@ Requires `better-sqlite3` and `@modelcontextprotocol/sdk` (installed via `npm in
 
 ### Tools
 
-The MCP server exposes 7 tools:
+The MCP server exposes 9 tools:
 
 | Tool | Type | Description |
 |------|------|-------------|
@@ -626,9 +683,11 @@ The MCP server exposes 7 tools:
 | `search` | Read | Unified search across all entity types (hybrid FTS5 + vector, or FTS-only fallback) |
 | `who_knows` | Read | Find people by expertise or involvement |
 | `get_stats` | Read | Database overview (entity counts) |
+| `get_links` | Read | Get cross-references for an entity (implements, supports, relates, blocks, answers) |
 | `add_knowledge` | Write | Structured write-back — agent provides pre-structured entities |
 | `ingest` | Write | Unstructured write-back — raw text is sent through LLM extraction and stored |
 | `update_entity` | Update | Update status of decisions, tasks, or questions |
+| `add_link` | Write | Create a typed, directional link between two entities |
 
 ### Client configuration
 
@@ -714,6 +773,12 @@ ingest({ text: "Alice said we should switch to PostgreSQL. Bob agreed.", profile
 
 # Update entity status
 update_entity({ type: "task", id: 42, status: "done" })
+
+# Link entities together
+add_link({ source_type: "task", source_id: 12, target_type: "decision", target_id: 5, link_type: "implements" })
+
+# Query entity relationships
+get_links({ entity_type: "decision", entity_id: 5 })
 ```
 
 ### Notes
