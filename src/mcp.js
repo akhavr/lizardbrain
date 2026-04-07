@@ -199,6 +199,35 @@ function createHandlers(driver, config) {
         return { isError: true, error: e.message };
       }
     },
+
+    async add_link(args) {
+      try {
+        const { from_type, from_id, to_type, to_id, relation } = args;
+        if (!from_type || !from_id || !to_type || !to_id || !relation) {
+          return { isError: true, error: 'Required: from_type, from_id, to_type, to_id, relation' };
+        }
+        const linkId = store.addLink(driver, from_type, from_id, to_type, to_id, relation);
+        if (linkId === false) {
+          return { isError: true, error: 'Failed to create link. Check types, relation, and that link is not a duplicate.' };
+        }
+        return { isError: false, data: { link_id: linkId } };
+      } catch (e) {
+        return { isError: true, error: e.message };
+      }
+    },
+
+    async get_links(args) {
+      try {
+        const { entity_type, entity_id } = args;
+        if (!entity_type || !entity_id) {
+          return { isError: true, error: 'Required: entity_type, entity_id' };
+        }
+        const links = store.getLinks(driver, entity_type, entity_id, { direction: args.direction || 'both' });
+        return { isError: false, data: { links } };
+      } catch (e) {
+        return { isError: true, error: e.message };
+      }
+    },
   };
 }
 
@@ -380,6 +409,44 @@ function createServer({ driver, config = {} }) {
     },
     async (args) => {
       const result = await handlers.update_entity(args);
+      if (result.isError) {
+        return { content: [{ type: 'text', text: result.error }], isError: true };
+      }
+      return { content: [{ type: 'text', text: JSON.stringify(result.data, null, 2) }] };
+    }
+  );
+
+  // --- Link tools ---
+
+  server.tool(
+    'add_link',
+    'Create a directional link between two entities. Relations: implements, supports, relates, blocks, answers.',
+    {
+      from_type: z.string().describe('Source entity type (fact, topic, decision, task, question, event, member)'),
+      from_id: z.number().describe('Source entity ID'),
+      to_type: z.string().describe('Target entity type'),
+      to_id: z.number().describe('Target entity ID'),
+      relation: z.string().describe('Relation type: implements, supports, relates, blocks, answers'),
+    },
+    async (args) => {
+      const result = await handlers.add_link(args);
+      if (result.isError) {
+        return { content: [{ type: 'text', text: result.error }], isError: true };
+      }
+      return { content: [{ type: 'text', text: JSON.stringify(result.data, null, 2) }] };
+    }
+  );
+
+  server.tool(
+    'get_links',
+    'Get links for an entity. Returns directional relationships to/from the entity.',
+    {
+      entity_type: z.string().describe('Entity type (fact, topic, decision, task, question, event, member)'),
+      entity_id: z.number().describe('Entity ID'),
+      direction: z.string().optional().describe('Filter: "from" (outgoing), "to" (incoming), "both" (default)'),
+    },
+    async (args) => {
+      const result = await handlers.get_links(args);
       if (result.isError) {
         return { content: [{ type: 'text', text: result.error }], isError: true };
       }

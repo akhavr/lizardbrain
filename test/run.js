@@ -1466,6 +1466,70 @@ function testProcessExtractionLinks() {
   driver.close();
 }
 
+async function testMcpLinkTools() {
+  console.log('\n--- Test: MCP link tools ---');
+
+  let mcp;
+  try {
+    mcp = require('../src/mcp');
+  } catch (e) {
+    console.log('  SKIP: @modelcontextprotocol/sdk not installed');
+    return;
+  }
+
+  const mcpDb = path.join(TEST_DIR, 'mcp-links.db');
+  if (fs.existsSync(mcpDb)) fs.unlinkSync(mcpDb);
+  lizardbrain.init(mcpDb, { profile: 'full' });
+  const driver = createDriver(mcpDb);
+  migrate(driver);
+
+  store.processExtraction(driver, {
+    members: [],
+    facts: [{ content: 'MCP link test fact', category: 'tool', tags: 'test', confidence: 0.9 }],
+    decisions: [{ description: 'MCP link test decision', status: 'agreed', tags: 'test' }],
+    topics: [],
+  }, '2026-04-01');
+
+  const factId = driver.read('SELECT id FROM facts LIMIT 1')[0].id;
+  const decisionId = driver.read('SELECT id FROM decisions LIMIT 1')[0].id;
+
+  const handlers = mcp.createHandlers(driver, {});
+
+  // add_link
+  const addResult = await handlers.add_link({
+    from_type: 'fact', from_id: factId,
+    to_type: 'decision', to_id: decisionId,
+    relation: 'supports',
+  });
+  assert(!addResult.isError, 'add_link: no error');
+  assert(addResult.data.link_id > 0, 'add_link: returns link_id');
+
+  // add_link: invalid relation
+  const badResult = await handlers.add_link({
+    from_type: 'fact', from_id: factId,
+    to_type: 'decision', to_id: decisionId,
+    relation: 'destroys',
+  });
+  assert(badResult.isError === true, 'add_link: rejects invalid relation');
+
+  // get_links
+  const getResult = await handlers.get_links({
+    entity_type: 'decision', entity_id: decisionId,
+  });
+  assert(!getResult.isError, 'get_links: no error');
+  assert(getResult.data.links.length === 1, 'get_links: returns 1 link');
+  assert(getResult.data.links[0].relation === 'supports', 'get_links: correct relation');
+
+  // get_links with direction
+  const fromResult = await handlers.get_links({
+    entity_type: 'fact', entity_id: factId, direction: 'from',
+  });
+  assert(!fromResult.isError, 'get_links from: no error');
+  assert(fromResult.data.links.length === 1, 'get_links from: returns 1 link');
+
+  driver.close();
+}
+
 function testDurabilityInSchema() {
   console.log('\n--- Test: durability in extraction schema ---');
 
@@ -2420,6 +2484,7 @@ async function runAll() {
   testLinkExtractionSchema();
   testLinkPromptRules();
   testProcessExtractionLinks();
+  await testMcpLinkTools();
   testDurabilityInSchema();
   testDurabilityInPrompt();
   testFactDurability();
