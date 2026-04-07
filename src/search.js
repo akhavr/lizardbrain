@@ -56,7 +56,7 @@ function ftsSearch(driver, query, limit, conversationId) {
     `SELECT f.id, f.content, f.confidence, f.tags, f.category, m.display_name as member
      FROM facts f
      LEFT JOIN members m ON f.source_member_id = m.id
-     WHERE f.id IN (SELECT rowid FROM facts_fts WHERE facts_fts MATCH '${escapedQuery}')${convFilter}
+     WHERE f.id IN (SELECT rowid FROM facts_fts WHERE facts_fts MATCH '${escapedQuery}') AND f.superseded_by IS NULL${convFilter}
      ORDER BY f.confidence DESC
      LIMIT ${limit}`
   );
@@ -80,7 +80,7 @@ function ftsSearch(driver, query, limit, conversationId) {
   const topics = driver.read(
     `SELECT id, name, summary, tags, participants
      FROM topics
-     WHERE id IN (SELECT rowid FROM topics_fts WHERE topics_fts MATCH '${escapedQuery}')${topicConvFilter}
+     WHERE id IN (SELECT rowid FROM topics_fts WHERE topics_fts MATCH '${escapedQuery}') AND superseded_by IS NULL${topicConvFilter}
      ORDER BY created_at DESC
      LIMIT ${limit}`
   );
@@ -101,7 +101,7 @@ function ftsSearch(driver, query, limit, conversationId) {
   const members = driver.read(
     `SELECT id, display_name, username, expertise, projects
      FROM members
-     WHERE id IN (SELECT rowid FROM members_fts WHERE members_fts MATCH '${escapedQuery}')
+     WHERE id IN (SELECT rowid FROM members_fts WHERE members_fts MATCH '${escapedQuery}') AND superseded_by IS NULL
      LIMIT ${limit}`
   );
   for (const m of members) {
@@ -122,7 +122,7 @@ function ftsSearch(driver, query, limit, conversationId) {
   const decisions = driver.read(
     `SELECT id, description, context, participants, status, tags
      FROM decisions
-     WHERE id IN (SELECT rowid FROM decisions_fts WHERE decisions_fts MATCH '${escapedQuery}')${decConvFilter}
+     WHERE id IN (SELECT rowid FROM decisions_fts WHERE decisions_fts MATCH '${escapedQuery}') AND superseded_by IS NULL${decConvFilter}
      ORDER BY created_at DESC
      LIMIT ${limit}`
   );
@@ -147,7 +147,7 @@ function ftsSearch(driver, query, limit, conversationId) {
     `SELECT t.id, t.description, t.assignee, t.status, t.tags, m.display_name as member
      FROM tasks t
      LEFT JOIN members m ON t.source_member_id = m.id
-     WHERE t.id IN (SELECT rowid FROM tasks_fts WHERE tasks_fts MATCH '${escapedQuery}')${taskConvFilter}
+     WHERE t.id IN (SELECT rowid FROM tasks_fts WHERE tasks_fts MATCH '${escapedQuery}') AND t.superseded_by IS NULL${taskConvFilter}
      ORDER BY t.created_at DESC
      LIMIT ${limit}`
   );
@@ -171,7 +171,7 @@ function ftsSearch(driver, query, limit, conversationId) {
   const questions = driver.read(
     `SELECT id, question, asker, answer, answered_by, status, tags
      FROM questions
-     WHERE id IN (SELECT rowid FROM questions_fts WHERE questions_fts MATCH '${escapedQuery}')${qConvFilter}
+     WHERE id IN (SELECT rowid FROM questions_fts WHERE questions_fts MATCH '${escapedQuery}') AND superseded_by IS NULL${qConvFilter}
      ORDER BY created_at DESC
      LIMIT ${limit}`
   );
@@ -196,7 +196,7 @@ function ftsSearch(driver, query, limit, conversationId) {
   const events = driver.read(
     `SELECT id, name, description, event_date, location, attendees, tags
      FROM events
-     WHERE id IN (SELECT rowid FROM events_fts WHERE events_fts MATCH '${escapedQuery}')${evtConvFilter}
+     WHERE id IN (SELECT rowid FROM events_fts WHERE events_fts MATCH '${escapedQuery}') AND superseded_by IS NULL${evtConvFilter}
      ORDER BY created_at DESC
      LIMIT ${limit}`
   );

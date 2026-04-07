@@ -1422,6 +1422,39 @@ function testContradictionConfigGating() {
   driver.close();
 }
 
+async function testHybridSearchExcludesSuperseded() {
+  console.log('\n--- Test: hybrid search excludes superseded ---');
+
+  const { search } = require('../src/search');
+
+  const db = path.join(TEST_DIR, 'search-superseded.db');
+  if (fs.existsSync(db)) fs.unlinkSync(db);
+  lizardbrain.init(db, { profile: 'full' });
+  const driver = createDriver(db);
+  migrate(driver);
+
+  store.processExtraction(driver, {
+    members: [],
+    facts: [
+      { category: 'tool', content: 'Team uses PostgreSQL database for production', tags: 'database', confidence: 0.9 },
+      { category: 'tool', content: 'Team migrated to MySQL database for production', tags: 'database', confidence: 0.9 },
+    ],
+    topics: [],
+  }, '2026-04-01');
+
+  const allFacts = driver.read('SELECT id FROM facts ORDER BY id');
+  // Supersede the old fact
+  store.markSuperseded(driver, 'facts', allFacts[0].id, allFacts[1].id);
+
+  const results = await search(driver, 'database production', { limit: 10, ftsOnly: true });
+  const factResults = results.results.filter(r => r.source === 'fact');
+  const hasSuperseded = factResults.some(r => r.id === allFacts[0].id);
+  assert(!hasSuperseded, 'Hybrid search excludes superseded facts');
+  assert(factResults.length >= 1, 'Hybrid search still returns non-superseded facts');
+
+  driver.close();
+}
+
 function testCredentialFiltering() {
   console.log('\n--- Test: credential filtering ---');
 
@@ -1970,6 +2003,7 @@ async function runAll() {
   testCheckContradictionsExport();
   testBuildContradictionPrompt();
   testContradictionConfigGating();
+  await testHybridSearchExcludesSuperseded();
   testCredentialFiltering();
   testGenericMemberFiltering();
   testCodeFenceStripping();
