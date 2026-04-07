@@ -324,6 +324,21 @@ CREATE TABLE IF NOT EXISTS embedding_metadata (
   PRIMARY KEY (entity_type, entity_id)
 );
 
+-- Entity cross-references (knowledge graph links)
+CREATE TABLE IF NOT EXISTS entity_links (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  from_type TEXT NOT NULL,
+  from_id INTEGER NOT NULL,
+  to_type TEXT NOT NULL,
+  to_id INTEGER NOT NULL,
+  relation TEXT NOT NULL,
+  created_at TEXT DEFAULT (datetime('now')),
+  UNIQUE(from_type, from_id, to_type, to_id, relation)
+);
+
+CREATE INDEX IF NOT EXISTS idx_links_from ON entity_links(from_type, from_id);
+CREATE INDEX IF NOT EXISTS idx_links_to ON entity_links(to_type, to_id);
+
 -- Performance indexes
 ${PERFORMANCE_INDEXES.map(s => s + ';').join('\n')}
 `;
@@ -348,7 +363,7 @@ function init(dbPath, { force = false, profile = 'knowledge' } = {}) {
   const { esc } = require('./driver');
   driver.write(`INSERT OR REPLACE INTO lizardbrain_meta (key, value, updated_at) VALUES ('profile_name', '${esc(profile)}', datetime('now'));`);
   driver.write(`INSERT OR REPLACE INTO lizardbrain_meta (key, value, updated_at) VALUES ('profile_entities', '${esc(profileConfig.entities.join(','))}', datetime('now'));`);
-  driver.write(`INSERT OR REPLACE INTO lizardbrain_meta (key, value, updated_at) VALUES ('schema_version', '0.9', datetime('now'));`);
+  driver.write(`INSERT OR REPLACE INTO lizardbrain_meta (key, value, updated_at) VALUES ('schema_version', '1.0', datetime('now'));`);
 
   driver.close();
 
@@ -365,9 +380,9 @@ function migrate(driver) {
   // Check current schema version
   const meta = driver.read("SELECT value FROM lizardbrain_meta WHERE key = 'schema_version'");
   const version = meta[0]?.value;
-  if (version >= '0.9') {
+  if (version >= '1.0') {
     applyIndexes(driver); // Ensure performance indexes exist (idempotent)
-    return { migrated: false, message: 'Already at v0.9' };
+    return { migrated: false, message: 'Already at v1.0' };
   }
 
   // Create new tables (IF NOT EXISTS makes this idempotent)
@@ -531,9 +546,27 @@ function migrate(driver) {
 
   driver.write("INSERT OR REPLACE INTO lizardbrain_meta (key, value, updated_at) VALUES ('schema_version', '0.9', datetime('now'));");
 
+  // v1.0 migration: entity_links table for cross-references
+  driver.write(`
+    CREATE TABLE IF NOT EXISTS entity_links (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      from_type TEXT NOT NULL,
+      from_id INTEGER NOT NULL,
+      to_type TEXT NOT NULL,
+      to_id INTEGER NOT NULL,
+      relation TEXT NOT NULL,
+      created_at TEXT DEFAULT (datetime('now')),
+      UNIQUE(from_type, from_id, to_type, to_id, relation)
+    );
+    CREATE INDEX IF NOT EXISTS idx_links_from ON entity_links(from_type, from_id);
+    CREATE INDEX IF NOT EXISTS idx_links_to ON entity_links(to_type, to_id);
+  `);
+
+  driver.write("INSERT OR REPLACE INTO lizardbrain_meta (key, value, updated_at) VALUES ('schema_version', '1.0', datetime('now'));");
+
   applyIndexes(driver); // Performance indexes (idempotent)
 
-  return { migrated: true, message: 'Migrated to v0.9 schema' };
+  return { migrated: true, message: 'Migrated to v1.0 schema' };
 }
 
 module.exports = { init, migrate, SCHEMA_SQL };

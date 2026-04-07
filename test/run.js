@@ -762,7 +762,7 @@ function testMigration() {
 
   // Verify schema version set
   const version = driver.read("SELECT value FROM lizardbrain_meta WHERE key = 'schema_version'");
-  assert(version[0]?.value === '0.9', 'Schema version set to 0.9');
+  assert(version[0]?.value === '1.0', 'Schema version set to 1.0');
 
   // Idempotent: running again should be a no-op
   const result2 = migrate(driver);
@@ -1160,7 +1160,7 @@ function testMigrationV05() {
 
   // Verify schema version
   const version = driver.read("SELECT value FROM lizardbrain_meta WHERE key = 'schema_version'");
-  assert(version[0]?.value === '0.9', 'Schema version updated to 0.9');
+  assert(version[0]?.value === '1.0', 'Schema version updated to 1.0');
 
   // Idempotent
   const result2 = migrate(driver);
@@ -1196,9 +1196,9 @@ function testMigrationV08() {
   const hasSupersededStat = stateCols.some(c => c.name === 'total_superseded');
   assert(hasSupersededStat, 'extraction_state has total_superseded column');
 
-  // Verify schema version is 0.8
+  // Verify schema version is 1.0
   const version = driver.read("SELECT value FROM lizardbrain_meta WHERE key = 'schema_version'");
-  assert(version[0]?.value === '0.9', 'Schema version set to 0.9');
+  assert(version[0]?.value === '1.0', 'Schema version set to 1.0');
 
   // Idempotent
   const result2 = migrate(driver);
@@ -1226,10 +1226,43 @@ function testMigrationV09() {
   assert(hasValidUntil, 'facts has valid_until column');
 
   const version = driver.read("SELECT value FROM lizardbrain_meta WHERE key = 'schema_version'");
-  assert(version[0]?.value === '0.9', 'Schema version set to 0.9');
+  assert(version[0]?.value === '1.0', 'Schema version set to 1.0');
 
   const result2 = migrate(driver);
   assert(result2.migrated === false, 'Second v0.9 migration is no-op');
+
+  driver.close();
+}
+
+function testMigrationV10() {
+  console.log('\n--- Test: migration v1.0 (entity_links) ---');
+
+  const V09_DB = path.join(TEST_DIR, 'v09.db');
+  if (fs.existsSync(V09_DB)) fs.unlinkSync(V09_DB);
+  lizardbrain.init(V09_DB, { profile: 'full' });
+  const driver = createDriver(V09_DB);
+
+  driver.write("UPDATE lizardbrain_meta SET value = '0.9' WHERE key = 'schema_version';");
+
+  const result = migrate(driver);
+  assert(result.migrated === true, 'v1.0 migration ran');
+
+  const tables = execSync(`sqlite3 "${V09_DB}" ".tables"`, { encoding: 'utf-8' });
+  assert(tables.includes('entity_links'), 'entity_links table exists');
+
+  const cols = driver.read('PRAGMA table_info(entity_links)');
+  const colNames = cols.map(c => c.name);
+  assert(colNames.includes('from_type'), 'entity_links has from_type');
+  assert(colNames.includes('from_id'), 'entity_links has from_id');
+  assert(colNames.includes('to_type'), 'entity_links has to_type');
+  assert(colNames.includes('to_id'), 'entity_links has to_id');
+  assert(colNames.includes('relation'), 'entity_links has relation');
+
+  const version2 = driver.read("SELECT value FROM lizardbrain_meta WHERE key = 'schema_version'");
+  assert(version2[0]?.value === '1.0', 'Schema version set to 1.0');
+
+  const result2 = migrate(driver);
+  assert(result2.migrated === false, 'Second v1.0 migration is no-op');
 
   driver.close();
 }
@@ -2180,6 +2213,7 @@ async function runAll() {
   testMigrationV05();
   testMigrationV08();
   testMigrationV09();
+  testMigrationV10();
   testDurabilityInSchema();
   testDurabilityInPrompt();
   testFactDurability();
