@@ -35,6 +35,8 @@ const GENERIC_MEMBER_NAMES = new Set([
 
 const GENERIC_MEMBER_PATTERN = /^(?:ai|content|chat|virtual|auto)\s+(?:agent|assistant|bot|helper)$/i;
 
+const DURABILITY_DAYS = { ephemeral: 7, short: 30, medium: 90 };
+
 function isGenericMember(name) {
   const normalized = name.toLowerCase().trim();
   return GENERIC_MEMBER_NAMES.has(normalized) || GENERIC_MEMBER_PATTERN.test(normalized);
@@ -115,8 +117,12 @@ function insertFact(driver, fact, memberId, messageDate, sourceAgent, conversati
   );
   if (duplicate.length > 0) return false;
 
+  const durability = fact.durability || null;
+  const days = DURABILITY_DAYS[durability];
+  const validUntil = days ? `datetime('${esc(messageDate)}', '+${days} days')` : 'NULL';
+
   driver.write(`
-    INSERT INTO facts (category, content, source_member_id, tags, confidence, message_date, source_agent, conversation_id)
+    INSERT INTO facts (category, content, source_member_id, tags, confidence, message_date, source_agent, conversation_id, valid_until)
     VALUES (
       '${esc(fact.category)}',
       '${esc(content)}',
@@ -125,7 +131,8 @@ function insertFact(driver, fact, memberId, messageDate, sourceAgent, conversati
       ${parseFloat(fact.confidence) || 0.8},
       '${esc(messageDate)}',
       ${sourceAgent ? `'${esc(sourceAgent)}'` : 'NULL'},
-      ${conversationId ? `'${esc(conversationId)}'` : 'NULL'}
+      ${conversationId ? `'${esc(conversationId)}'` : 'NULL'},
+      ${validUntil}
     );
   `);
   return true;

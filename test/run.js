@@ -1278,6 +1278,51 @@ function testDurabilityInPrompt() {
   assert(prompt.includes('durable'), 'Prompt includes durable option');
 }
 
+function testFactDurability() {
+  console.log('\n--- Test: fact durability and valid_until ---');
+
+  const db = path.join(TEST_DIR, 'durability.db');
+  if (fs.existsSync(db)) fs.unlinkSync(db);
+  lizardbrain.init(db, { profile: 'full' });
+  const driver = createDriver(db);
+  migrate(driver);
+
+  store.processExtraction(driver, {
+    members: [],
+    facts: [
+      { category: 'tool', content: 'Ephemeral fact about sprint blocker', tags: 'sprint', confidence: 0.9, durability: 'ephemeral' },
+      { category: 'tool', content: 'Short-term fact about sprint goals', tags: 'sprint', confidence: 0.9, durability: 'short' },
+      { category: 'tool', content: 'Medium-term fact about Q2 goals', tags: 'quarterly', confidence: 0.9, durability: 'medium' },
+      { category: 'tool', content: 'Durable fact about using PostgreSQL', tags: 'database', confidence: 0.9, durability: 'durable' },
+      { category: 'tool', content: 'Fact without durability field', tags: 'misc', confidence: 0.9 },
+    ],
+    topics: [],
+  }, '2026-04-01');
+
+  const facts = driver.read('SELECT content, valid_until FROM facts ORDER BY id');
+  assert(facts.length === 5, 'All 5 facts inserted');
+
+  // Ephemeral: valid_until = 2026-04-01 + 7 days = 2026-04-08
+  assert(facts[0].valid_until !== null, 'Ephemeral fact has valid_until');
+  assert(facts[0].valid_until.startsWith('2026-04-08'), `Ephemeral valid_until is 2026-04-08 (got ${facts[0].valid_until})`);
+
+  // Short: valid_until = 2026-04-01 + 30 days = 2026-05-01
+  assert(facts[1].valid_until !== null, 'Short fact has valid_until');
+  assert(facts[1].valid_until.startsWith('2026-05-01'), `Short valid_until is 2026-05-01 (got ${facts[1].valid_until})`);
+
+  // Medium: valid_until = 2026-04-01 + 90 days = 2026-06-30
+  assert(facts[2].valid_until !== null, 'Medium fact has valid_until');
+  assert(facts[2].valid_until.startsWith('2026-06-30'), `Medium valid_until is 2026-06-30 (got ${facts[2].valid_until})`);
+
+  // Durable: valid_until is NULL
+  assert(facts[3].valid_until === null, 'Durable fact has NULL valid_until');
+
+  // No durability: valid_until is NULL (default = durable)
+  assert(facts[4].valid_until === null, 'Fact without durability has NULL valid_until');
+
+  driver.close();
+}
+
 function testSupersededFiltering() {
   console.log('\n--- Test: superseded filtering ---');
 
@@ -2071,6 +2116,7 @@ async function runAll() {
   testMigrationV09();
   testDurabilityInSchema();
   testDurabilityInPrompt();
+  testFactDurability();
   testSupersededFiltering();
   testFindContradictionCandidates();
   testProcessExtractionInsertedIds();
