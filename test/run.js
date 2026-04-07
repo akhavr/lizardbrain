@@ -1387,6 +1387,85 @@ function testLinkPromptRules() {
   assert(prompt.includes('type:new:index'), 'Prompt includes new entity reference format');
 }
 
+function testProcessExtractionLinks() {
+  console.log('\n--- Test: processExtraction resolves and stores links ---');
+
+  const db = path.join(TEST_DIR, 'extraction-links.db');
+  if (fs.existsSync(db)) fs.unlinkSync(db);
+  lizardbrain.init(db, { profile: 'full' });
+  const driver = createDriver(db);
+  migrate(driver);
+
+  // Insert an existing decision first
+  store.processExtraction(driver, {
+    members: [],
+    facts: [],
+    decisions: [{ description: 'Use PostgreSQL for production', status: 'agreed', tags: 'database' }],
+    topics: [],
+  }, '2026-04-01');
+
+  const existingDecision = driver.read('SELECT id FROM decisions LIMIT 1');
+  const decisionId = existingDecision[0].id;
+
+  // Now extract with links referencing both existing and new entities
+  const result = store.processExtraction(driver, {
+    members: [],
+    facts: [
+      { category: 'tool', content: 'PostgreSQL supports JSONB columns', tags: 'database', confidence: 0.9 },
+    ],
+    tasks: [
+      { description: 'Configure PostgreSQL replication', assignee: 'Bob', status: 'open', tags: 'database' },
+    ],
+    decisions: [],
+    topics: [],
+    links: [
+      { from: `fact:new:0`, to: `decision:${decisionId}`, relation: 'supports' },
+      { from: `task:new:0`, to: `decision:${decisionId}`, relation: 'implements' },
+    ],
+  }, '2026-04-02');
+
+  assert(result.totalLinks === 2, `totalLinks is ${result.totalLinks} (expected 2)`);
+
+  // Verify links were stored with resolved IDs
+  const links = store.getLinks(driver, 'decision', decisionId, { direction: 'to' });
+  assert(links.length === 2, `Decision has ${links.length} incoming links (expected 2)`);
+  const relations = links.map(l => l.relation).sort();
+  assert(relations.includes('implements'), 'Has implements link');
+  assert(relations.includes('supports'), 'Has supports link');
+
+  // Same-batch linking: link between two new entities
+  const result2 = store.processExtraction(driver, {
+    members: [],
+    facts: [
+      { category: 'tool', content: 'Redis supports pub/sub messaging', tags: 'redis', confidence: 0.9 },
+    ],
+    decisions: [
+      { description: 'Use Redis for caching', status: 'proposed', tags: 'redis' },
+    ],
+    topics: [],
+    links: [
+      { from: 'fact:new:0', to: 'decision:new:0', relation: 'supports' },
+    ],
+  }, '2026-04-03');
+
+  assert(result2.totalLinks === 1, 'Same-batch link created');
+
+  // Invalid link references should be skipped silently
+  const result3 = store.processExtraction(driver, {
+    members: [],
+    facts: [{ category: 'tool', content: 'Invalid link test fact', tags: 'test', confidence: 0.9 }],
+    topics: [],
+    links: [
+      { from: 'fact:new:0', to: 'decision:99999', relation: 'supports' },
+      { from: 'invalid:new:0', to: 'fact:new:0', relation: 'relates' },
+    ],
+  }, '2026-04-04');
+
+  assert(result3.totalLinks <= 1, 'Invalid links handled gracefully');
+
+  driver.close();
+}
+
 function testDurabilityInSchema() {
   console.log('\n--- Test: durability in extraction schema ---');
 
@@ -2340,6 +2419,7 @@ async function runAll() {
   testEntityLinks();
   testLinkExtractionSchema();
   testLinkPromptRules();
+  testProcessExtractionLinks();
   testDurabilityInSchema();
   testDurabilityInPrompt();
   testFactDurability();

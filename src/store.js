@@ -640,7 +640,42 @@ function processExtraction(driver, extracted, messageDate, { sourceAgent = null,
     }
   }
 
-  return { totalFacts, totalTopics, totalMembers, totalDecisions, totalTasks, totalQuestions, totalEvents, totalUpdated, insertedIds, insertedFactIds: insertedIds.facts };
+  // Process links (entity cross-references)
+  let totalLinks = 0;
+  if (extracted.links && Array.isArray(extracted.links)) {
+    // Map from plural insertedIds keys to singular link types
+    const pluralToSingular = { facts: 'fact', topics: 'topic', decisions: 'decision', tasks: 'task', questions: 'question', events: 'event' };
+
+    for (const link of extracted.links) {
+      if (!link.from || !link.to || !link.relation) continue;
+
+      const resolveRef = (ref) => {
+        const parts = ref.split(':');
+        if (parts.length === 3 && parts[1] === 'new') {
+          // type:new:index — resolve from insertedIds
+          const type = parts[0];
+          const index = parseInt(parts[2]);
+          const pluralKey = Object.keys(pluralToSingular).find(k => pluralToSingular[k] === type);
+          if (!pluralKey || !insertedIds[pluralKey] || index >= insertedIds[pluralKey].length) return null;
+          return { type, id: insertedIds[pluralKey][index] };
+        }
+        if (parts.length === 2) {
+          // type:id — direct reference
+          return { type: parts[0], id: parseInt(parts[1]) };
+        }
+        return null;
+      };
+
+      const from = resolveRef(link.from);
+      const to = resolveRef(link.to);
+      if (!from || !to) continue;
+
+      const linkId = addLink(driver, from.type, from.id, to.type, to.id, link.relation);
+      if (linkId !== false) totalLinks++;
+    }
+  }
+
+  return { totalFacts, totalTopics, totalMembers, totalDecisions, totalTasks, totalQuestions, totalEvents, totalUpdated, totalLinks, insertedIds, insertedFactIds: insertedIds.facts };
 }
 
 /**
