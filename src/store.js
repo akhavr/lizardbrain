@@ -365,7 +365,8 @@ const ENTITY_CONTENT_FIELDS = {
  * @returns {Array<{id: number, content: string}>}
  */
 function findContradictionCandidates(driver, entityType, content, options = {}) {
-  const { maxCandidates = 5, excludeId = null } = options;
+  const { maxCandidates: rawMax = 5, excludeId = null } = options;
+  const maxCandidates = Math.max(1, parseInt(rawMax) || 5);
   const fieldDef = ENTITY_CONTENT_FIELDS[entityType];
   if (!fieldDef) return [];
 
@@ -444,40 +445,42 @@ function getLinks(driver, entityType, entityId, options = {}) {
 // --- Context query helpers ---
 
 function getActiveContext(driver, profileConfig, options = {}) {
-  const { recencyDays = 30, maxItems = {} } = options;
+  const { recencyDays: rawDays = 30, maxItems = {} } = options;
+  const recencyDays = Math.max(1, parseInt(rawDays) || 30);
+  const safeLimit = (v, fallback) => Math.max(1, parseInt(v) || fallback);
   const entities = profileConfig.entities;
   const context = {};
 
   if (entities.includes('decisions')) {
-    const limit = maxItems.decisions || 5;
+    const limit = safeLimit(maxItems.decisions, 5);
     context.decisions = driver.read(
       `SELECT id, description, status, context FROM decisions WHERE status IN ('proposed', 'agreed') AND superseded_by IS NULL ORDER BY created_at DESC LIMIT ${limit}`
     );
   }
 
   if (entities.includes('tasks')) {
-    const limit = maxItems.tasks || 10;
+    const limit = safeLimit(maxItems.tasks, 10);
     context.tasks = driver.read(
       `SELECT id, description, assignee, status FROM tasks WHERE status IN ('open', 'blocked') AND superseded_by IS NULL ORDER BY created_at DESC LIMIT ${limit}`
     );
   }
 
   if (entities.includes('questions')) {
-    const limit = maxItems.questions || 5;
+    const limit = safeLimit(maxItems.questions, 5);
     context.questions = driver.read(
       `SELECT id, question, asker, status FROM questions WHERE status = 'open' AND superseded_by IS NULL ORDER BY created_at DESC LIMIT ${limit}`
     );
   }
 
   if (entities.includes('facts')) {
-    const limit = maxItems.facts || 5;
+    const limit = safeLimit(maxItems.facts, 5);
     context.facts = driver.read(
       `SELECT id, content, confidence FROM facts WHERE created_at >= datetime('now', '-${recencyDays} days') AND superseded_by IS NULL AND (valid_until IS NULL OR valid_until >= datetime('now')) ORDER BY confidence DESC, created_at DESC LIMIT ${limit}`
     );
   }
 
   if (entities.includes('topics')) {
-    const limit = maxItems.topics || 3;
+    const limit = safeLimit(maxItems.topics, 3);
     context.topics = driver.read(
       `SELECT id, name FROM topics WHERE created_at >= datetime('now', '-${recencyDays} days') AND superseded_by IS NULL ORDER BY created_at DESC LIMIT ${limit}`
     );

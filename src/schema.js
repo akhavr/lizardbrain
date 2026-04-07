@@ -380,7 +380,7 @@ function migrate(driver) {
   // Check current schema version
   const meta = driver.read("SELECT value FROM lizardbrain_meta WHERE key = 'schema_version'");
   const version = meta[0]?.value;
-  if (version >= '1.0') {
+  if (parseFloat(version) >= 1.0) {
     applyIndexes(driver); // Ensure performance indexes exist (idempotent)
     return { migrated: false, message: 'Already at v1.0' };
   }
