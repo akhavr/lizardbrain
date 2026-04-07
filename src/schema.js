@@ -58,7 +58,8 @@ CREATE TABLE IF NOT EXISTS facts (
   source_agent TEXT DEFAULT NULL,
   conversation_id TEXT,
   created_at TEXT DEFAULT (datetime('now')),
-  superseded_by INTEGER
+  superseded_by INTEGER,
+  valid_until TEXT
 );
 
 -- Topics: discussion threads
@@ -347,7 +348,7 @@ function init(dbPath, { force = false, profile = 'knowledge' } = {}) {
   const { esc } = require('./driver');
   driver.write(`INSERT OR REPLACE INTO lizardbrain_meta (key, value, updated_at) VALUES ('profile_name', '${esc(profile)}', datetime('now'));`);
   driver.write(`INSERT OR REPLACE INTO lizardbrain_meta (key, value, updated_at) VALUES ('profile_entities', '${esc(profileConfig.entities.join(','))}', datetime('now'));`);
-  driver.write(`INSERT OR REPLACE INTO lizardbrain_meta (key, value, updated_at) VALUES ('schema_version', '0.8', datetime('now'));`);
+  driver.write(`INSERT OR REPLACE INTO lizardbrain_meta (key, value, updated_at) VALUES ('schema_version', '0.9', datetime('now'));`);
 
   driver.close();
 
@@ -364,9 +365,9 @@ function migrate(driver) {
   // Check current schema version
   const meta = driver.read("SELECT value FROM lizardbrain_meta WHERE key = 'schema_version'");
   const version = meta[0]?.value;
-  if (version >= '0.8') {
+  if (version >= '0.9') {
     applyIndexes(driver); // Ensure performance indexes exist (idempotent)
-    return { migrated: false, message: 'Already at v0.8' };
+    return { migrated: false, message: 'Already at v0.9' };
   }
 
   // Create new tables (IF NOT EXISTS makes this idempotent)
@@ -524,9 +525,15 @@ function migrate(driver) {
 
   driver.write("INSERT OR REPLACE INTO lizardbrain_meta (key, value, updated_at) VALUES ('schema_version', '0.8', datetime('now'));");
 
+  // v0.9 migration: valid_until on facts for temporal validity
+  try { driver.write('ALTER TABLE facts ADD COLUMN valid_until TEXT;'); }
+  catch (e) { /* column already exists */ }
+
+  driver.write("INSERT OR REPLACE INTO lizardbrain_meta (key, value, updated_at) VALUES ('schema_version', '0.9', datetime('now'));");
+
   applyIndexes(driver); // Performance indexes (idempotent)
 
-  return { migrated: true, message: 'Migrated to v0.8 schema' };
+  return { migrated: true, message: 'Migrated to v0.9 schema' };
 }
 
 module.exports = { init, migrate, SCHEMA_SQL };

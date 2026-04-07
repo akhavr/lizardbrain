@@ -762,7 +762,7 @@ function testMigration() {
 
   // Verify schema version set
   const version = driver.read("SELECT value FROM lizardbrain_meta WHERE key = 'schema_version'");
-  assert(version[0]?.value === '0.8', 'Schema version set to 0.8');
+  assert(version[0]?.value === '0.9', 'Schema version set to 0.9');
 
   // Idempotent: running again should be a no-op
   const result2 = migrate(driver);
@@ -1160,7 +1160,7 @@ function testMigrationV05() {
 
   // Verify schema version
   const version = driver.read("SELECT value FROM lizardbrain_meta WHERE key = 'schema_version'");
-  assert(version[0]?.value === '0.8', 'Schema version updated to 0.8');
+  assert(version[0]?.value === '0.9', 'Schema version updated to 0.9');
 
   // Idempotent
   const result2 = migrate(driver);
@@ -1198,11 +1198,38 @@ function testMigrationV08() {
 
   // Verify schema version is 0.8
   const version = driver.read("SELECT value FROM lizardbrain_meta WHERE key = 'schema_version'");
-  assert(version[0]?.value === '0.8', 'Schema version set to 0.8');
+  assert(version[0]?.value === '0.9', 'Schema version set to 0.9');
 
   // Idempotent
   const result2 = migrate(driver);
   assert(result2.migrated === false, 'Second v0.8 migration is no-op');
+
+  driver.close();
+}
+
+function testMigrationV09() {
+  console.log('\n--- Test: migration v0.9 (valid_until) ---');
+
+  const V08_DB = path.join(TEST_DIR, 'v08.db');
+  if (fs.existsSync(V08_DB)) fs.unlinkSync(V08_DB);
+  lizardbrain.init(V08_DB, { profile: 'full' });
+  const driver = createDriver(V08_DB);
+
+  // Force version to 0.8 to trigger migration
+  driver.write("UPDATE lizardbrain_meta SET value = '0.8' WHERE key = 'schema_version';");
+
+  const result = migrate(driver);
+  assert(result.migrated === true, 'v0.9 migration ran');
+
+  const cols = driver.read('PRAGMA table_info(facts)');
+  const hasValidUntil = cols.some(c => c.name === 'valid_until');
+  assert(hasValidUntil, 'facts has valid_until column');
+
+  const version = driver.read("SELECT value FROM lizardbrain_meta WHERE key = 'schema_version'");
+  assert(version[0]?.value === '0.9', 'Schema version set to 0.9');
+
+  const result2 = migrate(driver);
+  assert(result2.migrated === false, 'Second v0.9 migration is no-op');
 
   driver.close();
 }
@@ -1997,6 +2024,7 @@ async function runAll() {
   testBuildPromptWithContext();
   testMigrationV05();
   testMigrationV08();
+  testMigrationV09();
   testSupersededFiltering();
   testFindContradictionCandidates();
   testProcessExtractionInsertedIds();
