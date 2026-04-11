@@ -38,8 +38,7 @@ function esc(str) {
 function sanitizeFtsQuery(query) {
   if (!query) return '';
   const terms = query
-    .replace(/\0/g, '')
-    .replace(/[*"{}():\-]/g, '')
+    .replace(/[^\p{L}\p{N}\s]/gu, '')
     .replace(/\b(NEAR|NOT|OR|AND)\b/gi, '')
     .replace(/\s+/g, ' ')
     .trim()
