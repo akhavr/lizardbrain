@@ -5,20 +5,20 @@
   "description": "Auto-injects lizardbrain search results into agent context for community knowledge recall.",
   "entry": "openclaw-plugin.ts",
   "config": {
-    "lizardbrainDbPath": {
-      "type": "string",
-      "description": "Path to the lizardbrain.db database file",
-      "default": "./lizardbrain.db"
+    "enabled": {
+      "type": "boolean",
+      "description": "Enable memory recall injection",
+      "default": true
     },
     "maxResults": {
       "type": "number",
       "description": "Maximum number of search results to inject",
       "default": 5
     },
-    "enableDMs": {
-      "type": "boolean",
-      "description": "Inject memory context in direct messages (DMs), not just group chats",
-      "default": false
+    "minMessageLength": {
+      "type": "number",
+      "description": "Minimum message length to trigger memory search",
+      "default": 20
     }
   },
   "dependencies": {

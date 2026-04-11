@@ -771,6 +771,45 @@ function testMigration() {
   driver.close();
 }
 
+function testMigrationPreMeta() {
+  console.log('\n--- Test: migration on pre-meta database ---');
+
+  // Create a minimal database WITHOUT lizardbrain_meta table (pre-v0.4 style)
+  const PRE_META_DB = path.join(TEST_DIR, 'pre_meta.db');
+  if (fs.existsSync(PRE_META_DB)) fs.unlinkSync(PRE_META_DB);
+  execSync(`sqlite3 "${PRE_META_DB}"`, {
+    input: `
+      PRAGMA journal_mode=WAL;
+      CREATE TABLE members (id INTEGER PRIMARY KEY AUTOINCREMENT, username TEXT UNIQUE, display_name TEXT, expertise TEXT DEFAULT '', projects TEXT DEFAULT '', preferences TEXT DEFAULT '', first_seen TEXT, last_seen TEXT, updated_at TEXT DEFAULT (datetime('now')));
+      CREATE TABLE facts (id INTEGER PRIMARY KEY AUTOINCREMENT, category TEXT NOT NULL, content TEXT NOT NULL, source_member_id INTEGER, tags TEXT DEFAULT '', confidence REAL DEFAULT 0.8, message_date TEXT, created_at TEXT DEFAULT (datetime('now')));
+      CREATE TABLE topics (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL, summary TEXT, participants TEXT DEFAULT '', message_date TEXT, tags TEXT DEFAULT '', created_at TEXT DEFAULT (datetime('now')));
+      CREATE VIRTUAL TABLE members_fts USING fts5(username, display_name, expertise, projects, preferences, content='members', content_rowid='id');
+      CREATE VIRTUAL TABLE facts_fts USING fts5(category, content, tags, content='facts', content_rowid='id');
+      CREATE VIRTUAL TABLE topics_fts USING fts5(name, summary, participants, tags, content='topics', content_rowid='id');
+      CREATE TABLE extraction_state (id INTEGER PRIMARY KEY CHECK (id = 1), last_processed_id TEXT DEFAULT '0', total_messages_processed INTEGER DEFAULT 0, total_facts_extracted INTEGER DEFAULT 0, total_topics_extracted INTEGER DEFAULT 0, total_members_seen INTEGER DEFAULT 0, last_run_at TEXT, created_at TEXT DEFAULT (datetime('now')));
+      INSERT INTO extraction_state (id) VALUES (1);
+    `,
+    stdio: ['pipe', 'pipe', 'pipe'],
+  });
+
+  const driver = createDriver(PRE_META_DB);
+  const result = migrate(driver);
+  assert(result.migrated === true, 'Migration ran on pre-meta database');
+
+  // Verify lizardbrain_meta was created and populated
+  const version = driver.read("SELECT value FROM lizardbrain_meta WHERE key = 'schema_version'");
+  assert(version[0]?.value === '1.0', 'Schema version set to 1.0 on pre-meta DB');
+
+  const profile = driver.read("SELECT value FROM lizardbrain_meta WHERE key = 'profile_name'");
+  assert(profile[0]?.value === 'knowledge', 'Default profile set on pre-meta DB');
+
+  // Idempotent: running again should be a no-op
+  const result2 = migrate(driver);
+  assert(result2.migrated === false, 'Second migration on pre-meta DB is a no-op');
+
+  driver.close();
+}
+
 async function testNewEntityFtsSearch() {
   console.log('\n--- Test: new entity FTS search ---');
 
@@ -2480,6 +2519,7 @@ async function runAll() {
   testMigrationV08();
   testMigrationV09();
   testMigrationV10();
+  testMigrationPreMeta();
   testEntityLinks();
   testLinkExtractionSchema();
   testLinkPromptRules();

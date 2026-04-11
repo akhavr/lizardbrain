@@ -38,6 +38,11 @@ async function main() {
 
   const cfg = config.load(configPath);
 
+  // Suppress non-error output when --quiet is set
+  if (flag('quiet') || args.includes('-q')) {
+    console.log = () => {};
+  }
+
   switch (command) {
     case 'init': {
       let profile = flagValue('profile') || cfg.profile;
@@ -556,6 +561,7 @@ Profiles:
 Options:
   --config <path>                   Path to lizardbrain.json config file
   --profile <name>                  Set extraction profile (knowledge, team, project, full)
+  --quiet, -q                       Suppress non-error output
   --roster <path>                   Generate roster after extraction
   --no-enrich                       Skip URL metadata enrichment
   --no-embed                        Skip auto-embedding after extraction

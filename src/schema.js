@@ -371,11 +371,25 @@ function init(dbPath, { force = false, profile = 'knowledge' } = {}) {
 }
 
 /**
+ * Get existing column names for a table.
+ * Works with both CliDriver and BetterSqliteDriver.
+ */
+function getColumns(driver, tableName) {
+  const rows = driver.read(`PRAGMA table_info('${tableName}')`);
+  return new Set(rows.map(r => r.name));
+}
+
+/**
  * Migrate a v0.3 database to v0.4 schema.
  * Idempotent — safe to call on already-migrated databases.
  */
 function migrate(driver) {
   const { esc } = require('./driver');
+
+  // Ensure lizardbrain_meta exists (may be missing on pre-v0.4 databases)
+  driver.write(`CREATE TABLE IF NOT EXISTS lizardbrain_meta (
+    key TEXT PRIMARY KEY, value TEXT, updated_at TEXT DEFAULT (datetime('now'))
+  );`);
 
   // Check current schema version
   const meta = driver.read("SELECT value FROM lizardbrain_meta WHERE key = 'schema_version'");
@@ -467,13 +481,12 @@ function migrate(driver) {
   `;
   driver.write(newTables);
 
-  // Add new columns to extraction_state (try-catch for "duplicate column" on CLI driver)
+  // Add new columns to extraction_state
+  const esCols = getColumns(driver, 'extraction_state');
   const newCols = ['total_decisions_extracted', 'total_tasks_extracted', 'total_questions_extracted', 'total_events_extracted'];
   for (const col of newCols) {
-    try {
+    if (!esCols.has(col)) {
       driver.write(`ALTER TABLE extraction_state ADD COLUMN ${col} INTEGER DEFAULT 0;`);
-    } catch (e) {
-      // Column already exists — ignore
     }
   }
 
@@ -489,18 +502,21 @@ function migrate(driver) {
 
   // v0.5 migration: add updated_at to updateable tables, add updates counter
   for (const table of ['decisions', 'tasks', 'questions']) {
-    try { driver.write(`ALTER TABLE ${table} ADD COLUMN updated_at TEXT;`); }
-    catch (e) { /* column already exists */ }
+    if (!getColumns(driver, table).has('updated_at')) {
+      driver.write(`ALTER TABLE ${table} ADD COLUMN updated_at TEXT;`);
+    }
   }
-  try { driver.write('ALTER TABLE extraction_state ADD COLUMN total_updates_applied INTEGER DEFAULT 0;'); }
-  catch (e) { /* column already exists */ }
+  if (!getColumns(driver, 'extraction_state').has('total_updates_applied')) {
+    driver.write('ALTER TABLE extraction_state ADD COLUMN total_updates_applied INTEGER DEFAULT 0;');
+  }
 
   driver.write("INSERT OR REPLACE INTO lizardbrain_meta (key, value, updated_at) VALUES ('schema_version', '0.5', datetime('now'));");
 
   // v0.6 migration: source_agent on facts/decisions/tasks, embedding_metadata table
   for (const table of ['facts', 'decisions', 'tasks']) {
-    try { driver.write(`ALTER TABLE ${table} ADD COLUMN source_agent TEXT DEFAULT NULL;`); }
-    catch (e) { /* column already exists */ }
+    if (!getColumns(driver, table).has('source_agent')) {
+      driver.write(`ALTER TABLE ${table} ADD COLUMN source_agent TEXT DEFAULT NULL;`);
+    }
   }
 
   // embedding_metadata table for model_id tracking (vec0 doesn't support extra columns)
@@ -519,12 +535,10 @@ function migrate(driver) {
   // v0.7 migration: conversation_id on entity tables (not members — they span conversations)
   const convTables = ['facts', 'decisions', 'tasks', 'questions', 'events', 'topics'];
   for (const table of convTables) {
-    try { driver.write(`ALTER TABLE ${table} ADD COLUMN conversation_id TEXT;`); }
-    catch (e) { /* column already exists */ }
-  }
-  for (const table of convTables) {
-    try { driver.write(`CREATE INDEX IF NOT EXISTS idx_${table}_conversation ON ${table}(conversation_id);`); }
-    catch (e) { /* index already exists */ }
+    if (!getColumns(driver, table).has('conversation_id')) {
+      driver.write(`ALTER TABLE ${table} ADD COLUMN conversation_id TEXT;`);
+    }
+    driver.write(`CREATE INDEX IF NOT EXISTS idx_${table}_conversation ON ${table}(conversation_id);`);
   }
 
   driver.write("INSERT OR REPLACE INTO lizardbrain_meta (key, value, updated_at) VALUES ('schema_version', '0.7', datetime('now'));");
@@ -532,17 +546,20 @@ function migrate(driver) {
   // v0.8 migration: superseded_by on all entity tables + total_superseded stat
   const supersededTables = ['facts', 'topics', 'decisions', 'tasks', 'questions', 'events', 'members'];
   for (const table of supersededTables) {
-    try { driver.write(`ALTER TABLE ${table} ADD COLUMN superseded_by INTEGER;`); }
-    catch (e) { /* column already exists */ }
+    if (!getColumns(driver, table).has('superseded_by')) {
+      driver.write(`ALTER TABLE ${table} ADD COLUMN superseded_by INTEGER;`);
+    }
   }
-  try { driver.write('ALTER TABLE extraction_state ADD COLUMN total_superseded INTEGER DEFAULT 0;'); }
-  catch (e) { /* column already exists */ }
+  if (!getColumns(driver, 'extraction_state').has('total_superseded')) {
+    driver.write('ALTER TABLE extraction_state ADD COLUMN total_superseded INTEGER DEFAULT 0;');
+  }
 
   driver.write("INSERT OR REPLACE INTO lizardbrain_meta (key, value, updated_at) VALUES ('schema_version', '0.8', datetime('now'));");
 
   // v0.9 migration: valid_until on facts for temporal validity
-  try { driver.write('ALTER TABLE facts ADD COLUMN valid_until TEXT;'); }
-  catch (e) { /* column already exists */ }
+  if (!getColumns(driver, 'facts').has('valid_until')) {
+    driver.write('ALTER TABLE facts ADD COLUMN valid_until TEXT;');
+  }
 
   driver.write("INSERT OR REPLACE INTO lizardbrain_meta (key, value, updated_at) VALUES ('schema_version', '0.9', datetime('now'));");
 

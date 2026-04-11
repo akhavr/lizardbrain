@@ -40,9 +40,12 @@ const plugin = {
   id: "memory-recall",
   name: "Memory Recall",
   register(api: any) {
-    const dbPath = api.getConfig?.()?.lizardbrainDbPath || process.env.LIZARDBRAIN_DB_PATH || "./lizardbrain.db";
+    // Config keys (via OpenClaw manifest): maxResults, minMessageLength
+    // Custom settings (via env vars): LIZARDBRAIN_DB_PATH, LIZARDBRAIN_ENABLE_DMS
+    const dbPath = process.env.LIZARDBRAIN_DB_PATH || "./lizardbrain.db";
     const maxResults = api.getConfig?.()?.maxResults ?? 5;
-    const enableDMs = api.getConfig?.()?.enableDMs ?? false;
+    const minMessageLength = api.getConfig?.()?.minMessageLength ?? 20;
+    const enableDMs = process.env.LIZARDBRAIN_ENABLE_DMS === 'true';
 
     // Lazy-load lizardbrain to avoid startup penalty when plugin is disabled
     let lb: any = null;
@@ -67,10 +70,10 @@ const plugin = {
 
         const text = typeof last.content === "string" ? last.content
           : last.content?.filter((b: any) => b.type === "text").map((b: any) => b.text).join(" ") || "";
-        if (text.length < 20 || SKIP.some((p: RegExp) => p.test(text))) return {};
+        if (text.length < minMessageLength || SKIP.some((p: RegExp) => p.test(text))) return {};
 
         const query = text.replace(/https?:\/\/\S+/g, "").replace(/@\w+/g, "").trim().slice(0, 200);
-        if (query.length < 15) return {};
+        if (query.length < Math.max(minMessageLength - 5, 10)) return {};
 
         const drv = getDriver();
         if (!drv) return {};
