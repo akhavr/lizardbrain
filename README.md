@@ -3,7 +3,7 @@
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Node.js >= 18](https://img.shields.io/badge/node-%3E%3D18-brightgreen.svg)](https://nodejs.org)
-[![Version](https://img.shields.io/badge/version-1.0.0-orange.svg)](package.json)
+[![Version](https://img.shields.io/badge/version-1.0.1-orange.svg)](package.json)
 
 Your team's conversations have years of knowledge buried in thousands of messages -- chats, meetings, support threads. Who knows what, what was decided, what tasks were assigned, what questions were answered -- it's all there, but impossible to find.
 
@@ -123,6 +123,12 @@ No manual intervention needed. The LLM references entity IDs from context and ou
 **MCP server built in.** Run `lizardbrain serve` and any MCP-compatible client (Claude Desktop, Cursor, custom agents) can read, search, and write knowledge directly. 9 tools including entity link management. No shell-outs, no parsing CLI output — agents talk to LizardBrain over the Model Context Protocol.
 
 ---
+
+## v1.0.1 fixes
+
+- **Silent migration**: `migrate()` now creates `lizardbrain_meta` if missing (fixes "no such table" errors on pre-v0.4 databases) and checks column existence via `PRAGMA table_info` before `ALTER TABLE` (eliminates 26 "duplicate column" warnings per invocation)
+- **`--quiet` flag**: `lizardbrain stats --quiet` suppresses all non-error output — useful for cron jobs and plugin integrations
+- **OpenClaw plugin manifest**: replaced non-standard config keys with OpenClaw-compatible ones; custom settings now use env vars (`LIZARDBRAIN_DB_PATH`, `LIZARDBRAIN_ENABLE_DMS`)
 
 ## v1.0 features
 
@@ -638,6 +644,7 @@ lizardbrain serve                                         Start MCP server (stdi
 | `--profile <name>` | Set extraction profile (knowledge, team, project, full) |
 | `--roster <path>` | Generate roster after extraction |
 | `--no-enrich` | Skip URL metadata enrichment |
+| `--quiet`, `-q` | Suppress non-error output (useful for cron/plugins) |
 | `--no-embed` | Skip auto-embedding after extraction |
 | `--limit N` | Limit extraction to N batches |
 | `--from <id>` | Start extraction from a specific message ID |
