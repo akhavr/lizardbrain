@@ -355,7 +355,7 @@ async function backfill(driver, config, options = {}) {
           );
           for (let i = 0; i < batch.length; i++) {
             const row = rows[offset + i];
-            insertStmt.run(row.id, new Float32Array(result.embeddings[i]));
+            insertStmt.run(BigInt(row.id), new Float32Array(result.embeddings[i]));
             if (metaStmt) metaStmt.run('fact', row.id, config.model);
           }
         });
@@ -386,7 +386,7 @@ async function backfill(driver, config, options = {}) {
           );
           for (let i = 0; i < batch.length; i++) {
             const row = rows[offset + i];
-            insertStmt.run(row.id, new Float32Array(result.embeddings[i]));
+            insertStmt.run(BigInt(row.id), new Float32Array(result.embeddings[i]));
             if (metaStmt) metaStmt.run('topic', row.id, config.model);
           }
         });
@@ -419,7 +419,7 @@ async function backfill(driver, config, options = {}) {
           );
           for (let i = 0; i < batch.length; i++) {
             const row = rows[offset + i];
-            insertStmt.run(row.id, new Float32Array(result.embeddings[i]));
+            insertStmt.run(BigInt(row.id), new Float32Array(result.embeddings[i]));
             if (metaStmt) metaStmt.run('member', row.id, config.model);
           }
         });
@@ -452,7 +452,7 @@ async function backfill(driver, config, options = {}) {
           );
           for (let i = 0; i < batch.length; i++) {
             const row = rows[offset + i];
-            insertStmt.run(row.id, new Float32Array(result.embeddings[i]));
+            insertStmt.run(BigInt(row.id), new Float32Array(result.embeddings[i]));
             if (metaStmt) metaStmt.run('decision', row.id, config.model);
           }
         });
@@ -485,7 +485,7 @@ async function backfill(driver, config, options = {}) {
           );
           for (let i = 0; i < batch.length; i++) {
             const row = rows[offset + i];
-            insertStmt.run(row.id, new Float32Array(result.embeddings[i]));
+            insertStmt.run(BigInt(row.id), new Float32Array(result.embeddings[i]));
             if (metaStmt) metaStmt.run('task', row.id, config.model);
           }
         });
@@ -518,7 +518,7 @@ async function backfill(driver, config, options = {}) {
           );
           for (let i = 0; i < batch.length; i++) {
             const row = rows[offset + i];
-            insertStmt.run(row.id, new Float32Array(result.embeddings[i]));
+            insertStmt.run(BigInt(row.id), new Float32Array(result.embeddings[i]));
             if (metaStmt) metaStmt.run('question', row.id, config.model);
           }
         });
@@ -551,7 +551,7 @@ async function backfill(driver, config, options = {}) {
           );
           for (let i = 0; i < batch.length; i++) {
             const row = rows[offset + i];
-            insertStmt.run(row.id, new Float32Array(result.embeddings[i]));
+            insertStmt.run(BigInt(row.id), new Float32Array(result.embeddings[i]));
             if (metaStmt) metaStmt.run('event', row.id, config.model);
           }
         });

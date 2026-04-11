@@ -3,7 +3,7 @@
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Node.js >= 18](https://img.shields.io/badge/node-%3E%3D18-brightgreen.svg)](https://nodejs.org)
-[![Version](https://img.shields.io/badge/version-1.0.1-orange.svg)](package.json)
+[![Version](https://img.shields.io/badge/version-1.0.2-orange.svg)](package.json)
 
 Your team's conversations have years of knowledge buried in thousands of messages -- chats, meetings, support threads. Who knows what, what was decided, what tasks were assigned, what questions were answered -- it's all there, but impossible to find.
 
@@ -123,6 +123,10 @@ No manual intervention needed. The LLM references entity IDs from context and ou
 **MCP server built in.** Run `lizardbrain serve` and any MCP-compatible client (Claude Desktop, Cursor, custom agents) can read, search, and write knowledge directly. 9 tools including entity link management. No shell-outs, no parsing CLI output — agents talk to LizardBrain over the Model Context Protocol.
 
 ---
+
+## v1.0.2 fixes
+
+- **sqlite-vec BigInt compatibility**: cast `row.id` to `BigInt` before inserting into vec0 virtual tables — fixes compatibility with sqlite-vec v0.1.7+ which requires INTEGER (not REAL) primary keys
 
 ## v1.0.1 fixes
 
