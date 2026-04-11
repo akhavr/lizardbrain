@@ -82,65 +82,86 @@ is_group (BOOLEAN)               — Group vs DM
 const adapter = nanoclaw.create({
   path: '/path/to/messages.db',   // auto-discovered if omitted
   groupsOnly: true,               // default: true (filter chats.is_group)
-  skipBotMessages: true,          // default: true (skip is_from_me + is_bot_message)
-  chatJids: null,                 // optional: restrict to specific chat_jid list
+  skipOwnMessages: true,          // default: true (skip is_from_me — agent's own output)
+  skipBotMessages: true,          // default: true (skip is_bot_message — bot markers/context)
+  chatJids: null,                 // optional: restrict to specific chat_jid list (overrides groupsOnly)
 });
 ```
 
 ### Query Strategy
 
 ```sql
-SELECT m.id, m.content, m.sender_name, m.timestamp, m.chat_jid
+SELECT m.rowid, m.content, m.sender_name, m.timestamp, m.chat_jid
 FROM messages m
 JOIN chats c ON m.chat_jid = c.jid
-WHERE m.rowid > ?                       -- cursor tracking via rowid
-  AND m.is_from_me = 0                  -- skip bot's own messages
-  AND m.is_bot_message = 0              -- skip bot markers
-  AND c.is_group = 1                    -- groups only (when groupsOnly=true)
+WHERE m.rowid > ?                                    -- cursor: numeric rowid
+  AND COALESCE(m.is_from_me, 0) = 0                 -- skip agent's own messages (when skipOwnMessages=true)
+  AND COALESCE(m.is_bot_message, 0) = 0             -- skip bot markers (when skipBotMessages=true)
+  AND COALESCE(c.is_group, 0) = 1                   -- groups only (when groupsOnly=true and no chatJids)
 ORDER BY m.rowid ASC
 ```
 
-Note: Using `m.rowid` for cursor instead of composite `(id, chat_jid)` — rowid is monotonically increasing and simpler for cursor tracking.
+**Cursor strategy:** `m.rowid` is monotonically increasing in SQLite (standard rowid table, no WITHOUT ROWID). The cursor is stored and compared as an **integer**, not a string. The extractor's cursor comparison must use numeric comparison (`parseInt`) to avoid lexicographic bugs like `"9" > "10"`. The `setCursor`/`getCursor` functions in the forked `store.js` will be updated to handle numeric cursors.
+
+**Filter interaction:** When `chatJids` is explicitly provided, it overrides the `groupsOnly` filter — the caller has specified exactly which chats to process, regardless of group/DM status.
+
+**Orphaned messages:** The JOIN drops messages whose `chat_jid` has no matching row in `chats`. This is expected (NanoClaw may clean up old chats). The `validate()` method reports orphan count so data loss is visible.
 
 ### Column Mapping
 
 | Adapter output | Source |
 |---|---|
-| `id` | `messages.rowid` (cast to string) |
+| `id` | `messages.rowid` (cast to string for storage, compared as integer for cursor) |
 | `content` | `messages.content` |
 | `sender` | `messages.sender_name` |
-| `timestamp` | `messages.timestamp` (unix → ISO 8601) |
+| `timestamp` | `messages.timestamp` (unix seconds → ISO 8601) |
 | `conversationId` | `messages.chat_jid` |
 
 ### Validate Method
 
 - Check `messages.db` exists at path
 - Check `messages` and `chats` tables exist
-- Check at least one group conversation exists (when `groupsOnly=true`)
-- Return `{ ok: true, groupCount, messageCount }`
+- Count group conversations, total messages, orphaned messages (messages with no matching chat)
+- When `groupsOnly=true` and no `chatJids`: check at least one group conversation exists
+- Return `{ ok: true, groupCount, messageCount, orphanCount }`
+
+### Describe Method
+
+```js
+describe() {
+  return {
+    path: dbPath,
+    format: 'nanoclaw-sqlite',
+    tables: ['messages', 'chats'],
+    filters: { groupsOnly, skipOwnMessages, skipBotMessages, chatJids },
+  };
+}
+```
 
 ## Config (`config.js`)
 
-### Auto-Discovery
+### Source DB Auto-Discovery (precedence order)
 
-1. Check `NANOCLAW_MESSAGES_DB` env var
-2. Check `~/nanoclaw/store/messages.db`
-3. Fall back to explicit `source.path` in config file
+1. Explicit `source.path` in config file (highest priority)
+2. `NANOCLAW_MESSAGES_DB` env var
+3. `~/nanoclaw/store/messages.db` (default path)
 
 ### Environment Variables
 
+All env vars use the `LBNC_` prefix. Legacy `LIZARDBRAIN_*` aliases are accepted at lowest priority.
+
 | Variable | Purpose | Fallback |
 |---|---|---|
-| `NANOCLAW_MESSAGES_DB` | Path to NanoClaw's messages.db | auto-discover |
-| `NANOCLAW_MEMORY_DB` | Output lizardbrain-nc.db path | `LIZARDBRAIN_DB_PATH` → `./lizardbrain-nc.db` |
-| `NANOCLAW_GROUPS_ONLY` | Filter to group chats only | `true` |
-| `LIZARDBRAIN_LLM_BASE_URL` | LLM API endpoint | `LLM_BASE_URL` |
-| `LIZARDBRAIN_LLM_API_KEY` | LLM API key | `LLM_API_KEY` |
-| `LIZARDBRAIN_LLM_MODEL` | LLM model name | `LLM_MODEL` |
-| `LIZARDBRAIN_PROFILE` | Extraction profile | `knowledge` |
-| `LIZARDBRAIN_EMBEDDING_*` | Embedding config | (same as original) |
+| `LBNC_MESSAGES_DB` | Path to NanoClaw's messages.db | auto-discover |
+| `LBNC_MEMORY_DB` | Output lizardbrain-nc.db path | `./lizardbrain-nc.db` |
+| `LBNC_GROUPS_ONLY` | Filter to group chats only | `true` |
+| `LBNC_LLM_BASE_URL` | LLM API endpoint | `LLM_BASE_URL` |
+| `LBNC_LLM_API_KEY` | LLM API key | `LLM_API_KEY` |
+| `LBNC_LLM_MODEL` | LLM model name | `LLM_MODEL` |
+| `LBNC_PROFILE` | Extraction profile | `knowledge` |
+| `LBNC_EMBEDDING_*` | Embedding config | (same pattern) |
 
-The `LIZARDBRAIN_*` env vars are kept for the extraction/LLM/embedding layer since they're not NanoClaw-specific.
+Legacy aliases: `LIZARDBRAIN_*` and `NANOCLAW_*` variants are checked as fallbacks (e.g., `LBNC_LLM_API_KEY` > `LIZARDBRAIN_LLM_API_KEY` > `LLM_API_KEY`).
 
 ### Config File
 
@@ -151,6 +172,7 @@ Still supports `lizardbrain-nc.json` (or `lizardbrain.json` for backward compat)
   "source": {
     "path": "/path/to/messages.db",
     "groupsOnly": true,
+    "skipOwnMessages": true,
     "skipBotMessages": true,
     "chatJids": ["tg:-1001234567890"]
   },
@@ -194,7 +216,7 @@ No changes to `mcp.js`. The MCP server exposes `search`, `get_context`, and `who
       "command": "node",
       "args": ["/path/to/lizardbrain-nc/src/cli.js", "serve"],
       "env": {
-        "NANOCLAW_MEMORY_DB": "/path/to/lizardbrain-nc.db"
+        "LBNC_MEMORY_DB": "/path/to/lizardbrain-nc.db"
       }
     }
   }
