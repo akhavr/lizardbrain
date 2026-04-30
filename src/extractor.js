@@ -175,7 +175,7 @@ async function run(adapter, driver, config, options = {}) {
       const messageDate = primaryMsgs[0].timestamp?.split('T')[0] || new Date().toISOString().split('T')[0];
       const conversationId = batch[0]?.conversationId || null;
 
-      const result = store.processExtraction(driver, extracted, messageDate, { sourceAgent: config.sourceAgent || null, conversationId });
+      const result = store.processExtraction(driver, extracted, messageDate, { sourceAgent: config.sourceAgent || null, conversationId, visibility: config.visibility || 'public' });
 
       // Semantic dedup: if enabled, check new facts against existing embeddings
       if (config.dedup?.semantic && driver.capabilities.vectors && config.embedding?.enabled && result.insertedFactIds?.length > 0) {
