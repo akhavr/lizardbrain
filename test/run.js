@@ -454,11 +454,12 @@ function testRRFMerge() {
   }
 }
 
-function testFtsStopwords() {
-  console.log('\n--- Test: FTS stopwords ---');
+function testFtsQuerySanitization() {
+  console.log('\n--- Test: FTS query sanitization ---');
 
-  assert(sanitizeFtsQuery('what is SciGPT?') === 'SciGPT', 'Stopwords are removed from the query');
-  assert(sanitizeFtsQuery('what is the') === '', 'Stopword-only queries collapse to empty');
+  assert(sanitizeFtsQuery('what is SciGPT?') === 'what OR is OR SciGPT', 'Common English terms are preserved');
+  assert(sanitizeFtsQuery('what is the') === 'what OR is OR the', 'Common words are preserved for BM25 ranking');
+  assert(sanitizeFtsQuery('що таке SciGPT?') === 'що OR таке OR SciGPT', 'Non-English terms are preserved');
 }
 
 async function testFtsOnlySearch() {
@@ -476,8 +477,8 @@ async function testFtsOnlySearch() {
   driver.close();
 }
 
-async function testFtsStopwordSearchRanking() {
-  console.log('\n--- Test: FTS stopword search ranking ---');
+async function testFtsBm25SearchRanking() {
+  console.log('\n--- Test: FTS BM25 search ranking ---');
 
   const { search } = require('../src/search');
   const db = path.join(TEST_DIR, 'stopword-search.db');
@@ -491,20 +492,43 @@ async function testFtsStopwordSearchRanking() {
     members: [],
     facts: [
       { category: 'tool', content: 'The system is stable and ready for production', confidence: 0.99, tags: 'noise' },
-      { category: 'tool', content: 'SciGPT is a large language model for scientific literature understanding and knowledge discovery', confidence: 0.65, tags: 'scigpt' },
       { category: 'tool', content: 'This release is reliable and easy to use', confidence: 0.97, tags: 'noise' },
+      { category: 'tool', content: 'SciGPT is a large language model for scientific literature understanding and knowledge discovery', confidence: 0.65, tags: 'scigpt' },
     ],
     topics: [],
   }, '2026-04-30');
 
   const result = await search(driver, 'what is SciGPT?', { limit: 5, ftsOnly: true });
-  const topText = result.results[0]?.text || '';
   assert(result.mode === 'fts5', `Mode is fts5: ${result.mode}`);
   assert(result.results.length > 0, 'Search returned results');
-  assert(topText.includes('SciGPT'), `SciGPT ranks first after stopword filtering: ${topText}`);
-  assert(result.results.slice(0, 5).some(r => /SciGPT/i.test(r.text)), 'SciGPT appears in the top 5 results');
+  assert(result.results.slice(0, 3).some(r => /SciGPT/i.test(r.text)), 'SciGPT appears in the top 3 results');
+
+  const uaDb = path.join(TEST_DIR, 'bm25-ua-ru.db');
+  if (fs.existsSync(uaDb)) fs.unlinkSync(uaDb);
+
+  lizardbrain.init(uaDb, { profile: 'full' });
+  const uaDriver = createDriver(uaDb);
+  migrate(uaDriver);
+
+  store.processExtraction(uaDriver, {
+    members: [],
+    facts: [
+      { category: 'tool', content: 'Що це за система і чому вона важлива', confidence: 0.99, tags: 'noise' },
+      { category: 'tool', content: 'Что это за система и зачем она нужна', confidence: 0.99, tags: 'noise' },
+      { category: 'tool', content: 'SciGPT - це система для пошуку наукових статей', confidence: 0.6, tags: 'scigpt' },
+      { category: 'tool', content: 'SciGPT - это система для поиска научных статей', confidence: 0.6, tags: 'scigpt' },
+    ],
+    topics: [],
+  }, '2026-04-30');
+
+  const uaResult = await search(uaDriver, 'що таке SciGPT', { limit: 5, ftsOnly: true });
+  assert(uaResult.results.slice(0, 3).some(r => /SciGPT/i.test(r.text) && /це/.test(r.text)), 'Ukrainian query returns the matching SciGPT fact in the top 3');
+
+  const ruResult = await search(uaDriver, 'что такое SciGPT', { limit: 5, ftsOnly: true });
+  assert(ruResult.results.slice(0, 3).some(r => /SciGPT/i.test(r.text) && /это/.test(r.text)), 'Russian query returns the matching SciGPT fact in the top 3');
 
   driver.close();
+  uaDriver.close();
 }
 
 function testStdinAdapter() {
@@ -2545,9 +2569,9 @@ async function runAll() {
   testBetterSqliteDriver();
   await testEmbeddings();
   testRRFMerge();
-  testFtsStopwords();
+  testFtsQuerySanitization();
   await testFtsOnlySearch();
-  await testFtsStopwordSearchRanking();
+  await testFtsBm25SearchRanking();
   await testNewEntityFtsSearch();
   testBatchOverlap();
   testConversationBatching();

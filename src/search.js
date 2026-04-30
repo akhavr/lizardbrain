@@ -42,6 +42,7 @@ const DEFAULT_SCORING = {
   base: { decision: 600, topic: 600, task: 600, question: 600, member: 600, event: 600, fact: 600 },
   rankBonusMax: 30,
   rankBonusDecay: 3,
+  bm25BonusMax: 60,
   confidencePenalty: 30,
   confidenceBonus: 40,
   factLikeBonus: 35,
@@ -77,6 +78,12 @@ function scoreFtsResult(source, row, rank, intent, opts = {}) {
   const scoring = mergeScoring(DEFAULT_SCORING, opts.scoring);
   let score = scoring.base[source] || 0;
 
+  const bm25 = Number(row.bm25);
+  if (Number.isFinite(bm25)) {
+    const clampedBm25 = Math.max(-50, Math.min(50, bm25));
+    score += scoring.bm25BonusMax * (1 / (1 + Math.exp(clampedBm25)));
+  }
+
   score += Math.max(0, scoring.rankBonusMax - (rank * scoring.rankBonusDecay));
 
   if (source === 'fact') {
@@ -111,11 +118,12 @@ function ftsSearch(driver, query, limit, conversationId, opts = {}) {
 
   // Search facts_fts
   const facts = driver.read(
-    `SELECT f.id, f.content, f.confidence, f.tags, f.category, m.display_name as member
+    `SELECT f.id, f.content, f.confidence, f.tags, f.category, m.display_name as member, bm25(facts_fts) AS bm25
      FROM facts f
      LEFT JOIN members m ON f.source_member_id = m.id
-     WHERE f.id IN (SELECT rowid FROM facts_fts WHERE facts_fts MATCH '${escapedQuery}') AND f.superseded_by IS NULL AND (f.valid_until IS NULL OR f.valid_until >= datetime('now'))${convFilter}
-     ORDER BY f.confidence DESC
+     JOIN facts_fts ON facts_fts.rowid = f.id
+     WHERE facts_fts MATCH '${escapedQuery}' AND f.superseded_by IS NULL AND (f.valid_until IS NULL OR f.valid_until >= datetime('now'))${convFilter}
+     ORDER BY bm25 ASC, f.confidence DESC
      LIMIT ${limit}`
   );
   for (const [rank, f] of facts.entries()) {

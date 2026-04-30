@@ -30,20 +30,10 @@ function esc(str) {
   return String(str).replace(/\0/g, '').replace(/'/g, "''");
 }
 
-const STOPWORDS = new Set([
-  'a', 'an', 'the', 'is', 'are', 'was', 'were', 'be', 'been', 'being',
-  'have', 'has', 'had', 'do', 'does', 'did', 'will', 'would', 'could', 'should',
-  'what', 'which', 'who', 'whom', 'this', 'that', 'these', 'those',
-  'i', 'me', 'my', 'we', 'our', 'you', 'your', 'he', 'she', 'it', 'they',
-  'and', 'or', 'but', 'if', 'of', 'at', 'by', 'for', 'with', 'about',
-  'to', 'from', 'in', 'on', 'not', 'no', 'so', 'up', 'out', 'as',
-]);
-
 /**
- * Sanitize a user query for FTS5 MATCH — strip operators and stopwords that could cause
- * parse errors or broaden the query to near-universal matches.
- * Remaining terms are joined with OR (match any term). Internal dedup queries (via
- * extractKeywords) are already safe; this is for user-facing search.
+ * Sanitize a user query for FTS5 MATCH — strip operators and punctuation, then join
+ * the remaining terms with OR so common words can contribute to BM25 ranking without
+ * requiring language-specific stopword lists.
  */
 function sanitizeFtsQuery(query) {
   if (!query) return '';
@@ -53,7 +43,7 @@ function sanitizeFtsQuery(query) {
     .replace(/\s+/g, ' ')
     .trim()
     .split(' ')
-    .filter(term => term && !STOPWORDS.has(term.toLowerCase()));
+    .filter(term => term);
   if (terms.length === 0) return '';
   return terms.join(' OR ');
 }
