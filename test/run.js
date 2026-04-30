@@ -10,7 +10,7 @@ const fs = require('fs');
 
 const lizardbrain = require('../src/index');
 const store = require('../src/store');
-const { createDriver, esc } = require('../src/driver');
+const { createDriver, esc, sanitizeFtsQuery } = require('../src/driver');
 const profiles = require('../src/profiles');
 const { buildPrompt, formatMessages } = require('../src/llm');
 const { migrate } = require('../src/schema');
@@ -454,6 +454,13 @@ function testRRFMerge() {
   }
 }
 
+function testFtsStopwords() {
+  console.log('\n--- Test: FTS stopwords ---');
+
+  assert(sanitizeFtsQuery('what is SciGPT?') === 'SciGPT', 'Stopwords are removed from the query');
+  assert(sanitizeFtsQuery('what is the') === '', 'Stopword-only queries collapse to empty');
+}
+
 async function testFtsOnlySearch() {
   console.log('\n--- Test: FTS-only search ---');
   const { search } = require('../src/search');
@@ -466,6 +473,37 @@ async function testFtsOnlySearch() {
   assert(result.results[0].source, 'Has source field');
   assert(result.results[0].text, 'Has text field');
   assert(typeof result.results[0].score === 'number', 'Has numeric score');
+  driver.close();
+}
+
+async function testFtsStopwordSearchRanking() {
+  console.log('\n--- Test: FTS stopword search ranking ---');
+
+  const { search } = require('../src/search');
+  const db = path.join(TEST_DIR, 'stopword-search.db');
+  if (fs.existsSync(db)) fs.unlinkSync(db);
+
+  lizardbrain.init(db, { profile: 'full' });
+  const driver = createDriver(db);
+  migrate(driver);
+
+  store.processExtraction(driver, {
+    members: [],
+    facts: [
+      { category: 'tool', content: 'The system is stable and ready for production', confidence: 0.99, tags: 'noise' },
+      { category: 'tool', content: 'SciGPT is a large language model for scientific literature understanding and knowledge discovery', confidence: 0.65, tags: 'scigpt' },
+      { category: 'tool', content: 'This release is reliable and easy to use', confidence: 0.97, tags: 'noise' },
+    ],
+    topics: [],
+  }, '2026-04-30');
+
+  const result = await search(driver, 'what is SciGPT?', { limit: 5, ftsOnly: true });
+  const topText = result.results[0]?.text || '';
+  assert(result.mode === 'fts5', `Mode is fts5: ${result.mode}`);
+  assert(result.results.length > 0, 'Search returned results');
+  assert(topText.includes('SciGPT'), `SciGPT ranks first after stopword filtering: ${topText}`);
+  assert(result.results.slice(0, 5).some(r => /SciGPT/i.test(r.text)), 'SciGPT appears in the top 5 results');
+
   driver.close();
 }
 
@@ -2507,7 +2545,9 @@ async function runAll() {
   testBetterSqliteDriver();
   await testEmbeddings();
   testRRFMerge();
+  testFtsStopwords();
   await testFtsOnlySearch();
+  await testFtsStopwordSearchRanking();
   await testNewEntityFtsSearch();
   testBatchOverlap();
   testConversationBatching();
