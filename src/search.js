@@ -39,13 +39,13 @@ function mergeRRF(resultSets, K = 60) {
 }
 
 const TYPE_BASE_SCORES = {
-  decision: 660,
-  topic: 640,
-  task: 630,
-  question: 600,
+  decision: 620,
+  topic: 610,
+  task: 600,
+  question: 590,
   member: 580,
-  event: 560,
-  fact: 520,
+  event: 570,
+  fact: 560,
 };
 
 function analyzeQueryIntent(query) {
