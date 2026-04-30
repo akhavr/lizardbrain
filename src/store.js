@@ -58,7 +58,7 @@ function mergeCSV(existing, incoming) {
   return result.join(', ');
 }
 
-function upsertMember(driver, member, messageDate) {
+function upsertMember(driver, member, messageDate, visibility = 'public') {
   const existing = driver.read(
     `SELECT id, expertise, projects FROM members WHERE display_name='${esc(member.display_name)}' OR username='${esc(member.username)}'`
   );
@@ -73,20 +73,22 @@ function upsertMember(driver, member, messageDate) {
         expertise = '${esc(mergedExpertise)}',
         projects = '${esc(mergedProjects)}',
         last_seen = '${esc(messageDate)}',
+        visibility = '${esc(visibility)}',
         updated_at = datetime('now')
       WHERE id = ${e.id};
     `);
     return e.id;
   } else {
     driver.write(`
-      INSERT INTO members (username, display_name, expertise, projects, first_seen, last_seen)
+      INSERT INTO members (username, display_name, expertise, projects, first_seen, last_seen, visibility)
       VALUES (
         '${esc(member.username || '')}',
         '${esc(member.display_name)}',
         '${esc(member.expertise || '')}',
         '${esc(member.projects || '')}',
         '${esc(messageDate)}',
-        '${esc(messageDate)}'
+        '${esc(messageDate)}',
+        '${esc(visibility)}'
       );
     `);
     // Query back the id (last_insert_rowid doesn't work across separate sqlite3 processes)
@@ -548,7 +550,7 @@ function processExtraction(driver, extracted, messageDate, { sourceAgent = null,
     for (const member of extracted.members) {
       if (!member.display_name) continue;
       if (isGenericMember(member.display_name)) continue;
-      const id = upsertMember(driver, member, messageDate);
+      const id = upsertMember(driver, member, messageDate, visibility);
       memberIdMap[member.display_name.toLowerCase()] = id;
       totalMembers++;
     }

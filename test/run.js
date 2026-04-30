@@ -2672,6 +2672,7 @@ function testVisibilityStored() {
 
   // Extract with default visibility (public)
   store.processExtraction(driver, {
+    members: [{ display_name: 'Public Member', expertise: 'testing' }],
     facts: [{ category: 'test', content: 'Public fact one' }],
     topics: [{ name: 'Public topic' }],
     decisions: [{ description: 'Public decision' }],
@@ -2684,8 +2685,12 @@ function testVisibilityStored() {
   const publicFact = driver.read("SELECT visibility FROM facts WHERE content = 'Public fact one'");
   assert(publicFact.length > 0 && publicFact[0].visibility === 'public', 'Default visibility is public');
 
+  const publicMember = driver.read("SELECT visibility FROM members WHERE display_name = 'Public Member'");
+  assert(publicMember.length > 0 && publicMember[0].visibility === 'public', 'Default visibility on member');
+
   // Extract with explicit visibility
   store.processExtraction(driver, {
+    members: [{ display_name: 'Private Member', expertise: 'security' }],
     facts: [{ category: 'test', content: 'Private fact two' }],
     topics: [{ name: 'Private topic' }],
     decisions: [{ description: 'Private decision' }],
@@ -2697,6 +2702,9 @@ function testVisibilityStored() {
   // Verify private visibility is stored
   const privateFact = driver.read("SELECT visibility FROM facts WHERE content = 'Private fact two'");
   assert(privateFact.length > 0 && privateFact[0].visibility === 'private', 'Private visibility stored');
+
+  const privateMember = driver.read("SELECT visibility FROM members WHERE display_name = 'Private Member'");
+  assert(privateMember.length > 0 && privateMember[0].visibility === 'private', 'Private visibility on member');
 
   const privateTopic = driver.read("SELECT visibility FROM topics WHERE name = 'Private topic'");
   assert(privateTopic.length > 0 && privateTopic[0].visibility === 'private', 'Private visibility on topic');
