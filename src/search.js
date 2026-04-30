@@ -39,8 +39,8 @@ function mergeRRF(resultSets, K = 60) {
 }
 
 const DEFAULT_SCORING = {
-  base: { decision: 620, topic: 610, task: 600, question: 590, member: 580, event: 570, fact: 560 },
-  confidencePenalty: 60,
+  base: { decision: 600, topic: 600, task: 600, question: 600, member: 600, event: 600, fact: 600 },
+  confidencePenalty: 30,
   factLikeBonus: 35,
   timeline: { decision: 70, topic: 65, task: 60, event: 55, fact: 40, member: 15 },
   decision: { decision: 85, topic: 35, event: 30, fact: 25, task: 20, question: 10 },
