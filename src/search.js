@@ -38,6 +38,67 @@ function mergeRRF(resultSets, K = 60) {
   return merged;
 }
 
+const TYPE_BASE_SCORES = {
+  decision: 660,
+  topic: 640,
+  task: 630,
+  question: 600,
+  member: 580,
+  event: 560,
+  fact: 520,
+};
+
+function analyzeQueryIntent(query) {
+  const normalized = String(query || '').toLowerCase();
+  return {
+    decision: /\b(decision|decisions|approve|approved|approval|agree|agreed|choice|key decisions?)\b/.test(normalized),
+    timeline: /\b(timeline|schedule|deployment|release|launch|roadmap|plan|planning|milestone)\b/.test(normalized),
+    responsibility: /\b(responsib(?:le|ility)|owner|ownership)\b/.test(normalized) || /\bwho\b/.test(normalized),
+    question: /^\s*(who|what|when|where|why|how)\b/.test(normalized) || /\?$/.test(normalized),
+    factLike: /\b(fact|facts|detail|details|note|notes|status|update|information|info)\b/.test(normalized),
+  };
+}
+
+function scoreFtsResult(source, row, rank, intent) {
+  let score = TYPE_BASE_SCORES[source] || 0;
+
+  score += Math.max(0, 30 - (rank * 3));
+
+  if (source === 'fact') {
+    const confidence = Number(row.confidence);
+    if (Number.isFinite(confidence)) {
+      score += Math.max(0, (confidence - 0.5) * 40);
+      score -= Math.max(0, (0.8 - confidence) * 120);
+    }
+    if (intent.factLike) score += 35;
+  }
+
+  if (intent.timeline) {
+    if (source === 'topic') score += 65;
+    if (source === 'decision') score += 70;
+    if (source === 'task') score += 60;
+    if (source === 'event') score += 45;
+    if (source === 'member') score += 15;
+  }
+
+  if (intent.decision) {
+    if (source === 'decision') score += 85;
+    if (source === 'topic') score += 35;
+    if (source === 'task') score += 20;
+    if (source === 'question') score += 10;
+  }
+
+  if (intent.responsibility || intent.question) {
+    if (source === 'question') score += 75;
+    if (source === 'task') score += 60;
+    if (source === 'member') score += 45;
+    if (source === 'decision') score += 20;
+    if (source === 'topic') score += 10;
+  }
+
+  return score;
+}
+
 /**
  * Run FTS5 keyword search across facts, topics, and members.
  *
@@ -50,6 +111,7 @@ function ftsSearch(driver, query, limit, conversationId) {
   const escapedQuery = esc(sanitizeFtsQuery(query));
   const convFilter = conversationId ? ` AND f.conversation_id = '${esc(conversationId)}'` : '';
   const results = [];
+  const intent = analyzeQueryIntent(query);
 
   // Search facts_fts
   const facts = driver.read(
@@ -60,9 +122,11 @@ function ftsSearch(driver, query, limit, conversationId) {
      ORDER BY f.confidence DESC
      LIMIT ${limit}`
   );
-  for (const f of facts) {
+  for (const [rank, f] of facts.entries()) {
     results.push({
       key: `fact:${f.id}`,
+      score: scoreFtsResult('fact', f, rank, intent),
+      rank,
       data: {
         source: 'fact',
         id: f.id,
@@ -84,9 +148,11 @@ function ftsSearch(driver, query, limit, conversationId) {
      ORDER BY created_at DESC
      LIMIT ${limit}`
   );
-  for (const t of topics) {
+  for (const [rank, t] of topics.entries()) {
     results.push({
       key: `topic:${t.id}`,
+      score: scoreFtsResult('topic', t, rank, intent),
+      rank,
       data: {
         source: 'topic',
         id: t.id,
@@ -104,9 +170,11 @@ function ftsSearch(driver, query, limit, conversationId) {
      WHERE id IN (SELECT rowid FROM members_fts WHERE members_fts MATCH '${escapedQuery}') AND superseded_by IS NULL
      LIMIT ${limit}`
   );
-  for (const m of members) {
+  for (const [rank, m] of members.entries()) {
     results.push({
       key: `member:${m.id}`,
+      score: scoreFtsResult('member', m, rank, intent),
+      rank,
       data: {
         source: 'member',
         id: m.id,
@@ -126,9 +194,11 @@ function ftsSearch(driver, query, limit, conversationId) {
      ORDER BY created_at DESC
      LIMIT ${limit}`
   );
-  for (const d of decisions) {
+  for (const [rank, d] of decisions.entries()) {
     results.push({
       key: `decision:${d.id}`,
+      score: scoreFtsResult('decision', d, rank, intent),
+      rank,
       data: {
         source: 'decision',
         id: d.id,
@@ -151,9 +221,11 @@ function ftsSearch(driver, query, limit, conversationId) {
      ORDER BY t.created_at DESC
      LIMIT ${limit}`
   );
-  for (const t of tasks) {
+  for (const [rank, t] of tasks.entries()) {
     results.push({
       key: `task:${t.id}`,
+      score: scoreFtsResult('task', t, rank, intent),
+      rank,
       data: {
         source: 'task',
         id: t.id,
@@ -175,9 +247,11 @@ function ftsSearch(driver, query, limit, conversationId) {
      ORDER BY created_at DESC
      LIMIT ${limit}`
   );
-  for (const q of questions) {
+  for (const [rank, q] of questions.entries()) {
     results.push({
       key: `question:${q.id}`,
+      score: scoreFtsResult('question', q, rank, intent),
+      rank,
       data: {
         source: 'question',
         id: q.id,
@@ -200,9 +274,11 @@ function ftsSearch(driver, query, limit, conversationId) {
      ORDER BY created_at DESC
      LIMIT ${limit}`
   );
-  for (const e of events) {
+  for (const [rank, e] of events.entries()) {
     results.push({
       key: `event:${e.id}`,
+      score: scoreFtsResult('event', e, rank, intent),
+      rank,
       data: {
         source: 'event',
         id: e.id,
@@ -215,6 +291,12 @@ function ftsSearch(driver, query, limit, conversationId) {
       },
     });
   }
+
+  results.sort((a, b) => {
+    if (b.score !== a.score) return b.score - a.score;
+    if (a.rank !== b.rank) return a.rank - b.rank;
+    return a.key.localeCompare(b.key);
+  });
 
   return results;
 }
@@ -547,14 +629,14 @@ async function search(driver, query, options = {}) {
     }
   }
 
-  // FTS-only path: assign pseudo-RRF scores based on rank
-  const results = ftsResults.slice(0, limit).map((item, rank) => {
+  // FTS-only path: use intent-based scores from ftsSearch
+  const results = ftsResults.slice(0, limit).map((item) => {
     const d = item.data;
     const out = {
       source: d.source,
       id: d.id,
       text: d.text,
-      score: 1 / (60 + rank + 1),
+      score: item.score,
     };
     if (d.confidence !== undefined) out.confidence = d.confidence;
     if (d.member !== undefined) out.member = d.member;

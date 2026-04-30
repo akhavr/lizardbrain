@@ -42,15 +42,33 @@ function create(config) {
 
     getMessages(afterId) {
       const raw = fs.readFileSync(filePath, 'utf-8');
-      const lines = raw.split('\n').filter(l => l.trim());
+      const trimmed = raw.trim();
       const afterIdStr = String(afterId);
 
       let pastCursor = afterIdStr === '0';
       const messages = [];
 
-      for (const line of lines) {
+      // Support JSON array format (e.g., [{"id":1,...}, {"id":2,...}])
+      let items = [];
+      if (trimmed.startsWith('[')) {
         try {
-          const obj = JSON.parse(line);
+          const parsed = JSON.parse(trimmed);
+          items = Array.isArray(parsed) ? parsed : [];
+        } catch {
+          items = [];
+        }
+      } else {
+        // JSONL format: one JSON object per line
+        const lines = trimmed.split('\n').filter(l => l.trim());
+        for (const line of lines) {
+          try {
+            items.push(JSON.parse(line));
+          } catch {}
+        }
+      }
+
+      for (const obj of items) {
+        try {
           const id = String(obj[idField] || '');
 
           if (!pastCursor) {

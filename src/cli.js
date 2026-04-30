@@ -66,7 +66,11 @@ async function main() {
 
       const driver = createDriver(cfg.memoryDbPath);
       migrate(driver);
-      const adapter = createAdapter(cfg.source);
+      const positionalPath = args[1] && !args[1].startsWith('--') ? args[1] : null;
+      const source = positionalPath
+        ? { type: 'jsonl', path: positionalPath, fields: cfg.source?.fields || {} }
+        : cfg.source;
+      const adapter = createAdapter(source);
       const rosterOutput = flag('roster') ? args[args.indexOf('--roster') + 1] : (cfg.rosterPath || null);
       const result = await lizardbrain.extract(adapter, driver, cfg, {
         dryRun: flag('dry-run'),
