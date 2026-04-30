@@ -59,7 +59,8 @@ function analyzeQueryIntent(query) {
   };
 }
 
-function scoreFtsResult(source, row, rank, intent) {
+function scoreFtsResult(source, row, rank, intent, opts = {}) {
+  const confidencePenalty = opts.confidencePenalty ?? 60;
   let score = TYPE_BASE_SCORES[source] || 0;
 
   score += Math.max(0, 30 - (rank * 3));
@@ -68,7 +69,7 @@ function scoreFtsResult(source, row, rank, intent) {
     const confidence = Number(row.confidence);
     if (Number.isFinite(confidence)) {
       score += Math.max(0, (confidence - 0.5) * 40);
-      score -= Math.max(0, (0.8 - confidence) * 60);
+      score -= Math.max(0, (0.8 - confidence) * confidencePenalty);
     }
     if (intent.factLike) score += 35;
   }
@@ -107,7 +108,7 @@ function scoreFtsResult(source, row, rank, intent) {
  * @param {number} limit - Max results per table
  * @returns {Array<{key: string, data: object}>}
  */
-function ftsSearch(driver, query, limit, conversationId) {
+function ftsSearch(driver, query, limit, conversationId, opts = {}) {
   const escapedQuery = esc(sanitizeFtsQuery(query));
   const convFilter = conversationId ? ` AND f.conversation_id = '${esc(conversationId)}'` : '';
   const results = [];
@@ -125,7 +126,7 @@ function ftsSearch(driver, query, limit, conversationId) {
   for (const [rank, f] of facts.entries()) {
     results.push({
       key: `fact:${f.id}`,
-      score: scoreFtsResult('fact', f, rank, intent),
+      score: scoreFtsResult('fact', f, rank, intent, opts),
       rank,
       data: {
         source: 'fact',
@@ -151,7 +152,7 @@ function ftsSearch(driver, query, limit, conversationId) {
   for (const [rank, t] of topics.entries()) {
     results.push({
       key: `topic:${t.id}`,
-      score: scoreFtsResult('topic', t, rank, intent),
+      score: scoreFtsResult('topic', t, rank, intent, opts),
       rank,
       data: {
         source: 'topic',
@@ -173,7 +174,7 @@ function ftsSearch(driver, query, limit, conversationId) {
   for (const [rank, m] of members.entries()) {
     results.push({
       key: `member:${m.id}`,
-      score: scoreFtsResult('member', m, rank, intent),
+      score: scoreFtsResult('member', m, rank, intent, opts),
       rank,
       data: {
         source: 'member',
@@ -197,7 +198,7 @@ function ftsSearch(driver, query, limit, conversationId) {
   for (const [rank, d] of decisions.entries()) {
     results.push({
       key: `decision:${d.id}`,
-      score: scoreFtsResult('decision', d, rank, intent),
+      score: scoreFtsResult('decision', d, rank, intent, opts),
       rank,
       data: {
         source: 'decision',
@@ -224,7 +225,7 @@ function ftsSearch(driver, query, limit, conversationId) {
   for (const [rank, t] of tasks.entries()) {
     results.push({
       key: `task:${t.id}`,
-      score: scoreFtsResult('task', t, rank, intent),
+      score: scoreFtsResult('task', t, rank, intent, opts),
       rank,
       data: {
         source: 'task',
@@ -250,7 +251,7 @@ function ftsSearch(driver, query, limit, conversationId) {
   for (const [rank, q] of questions.entries()) {
     results.push({
       key: `question:${q.id}`,
-      score: scoreFtsResult('question', q, rank, intent),
+      score: scoreFtsResult('question', q, rank, intent, opts),
       rank,
       data: {
         source: 'question',
@@ -277,7 +278,7 @@ function ftsSearch(driver, query, limit, conversationId) {
   for (const [rank, e] of events.entries()) {
     results.push({
       key: `event:${e.id}`,
-      score: scoreFtsResult('event', e, rank, intent),
+      score: scoreFtsResult('event', e, rank, intent, opts),
       rank,
       data: {
         source: 'event',
@@ -594,10 +595,11 @@ function vecSearch(driver, queryEmbedding, limit, modelId, conversationId) {
  * @returns {Promise<{mode: 'hybrid'|'fts5', results: Array}>}
  */
 async function search(driver, query, options = {}) {
-  const { limit = 10, ftsOnly = false, embeddingConfig = null, conversationId = null } = options;
+  const { limit = 10, ftsOnly = false, embeddingConfig = null, conversationId = null, confidencePenalty = 60 } = options;
   const ftsLimit = limit * 2;
+  const ftsOpts = { confidencePenalty };
 
-  const ftsResults = ftsSearch(driver, query, ftsLimit, conversationId);
+  const ftsResults = ftsSearch(driver, query, ftsLimit, conversationId, ftsOpts);
 
   const canDoVec = !ftsOnly && driver.capabilities.vectors && embeddingConfig;
 

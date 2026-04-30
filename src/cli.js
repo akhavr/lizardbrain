@@ -153,6 +153,7 @@ async function main() {
         ftsOnly: flag('fts-only'),
         embeddingConfig: embCfg,
         conversationId: flagValue('conversation') || null,
+        confidencePenalty: flagValue('confidence-penalty') ? parseInt(flagValue('confidence-penalty')) : 60,
       });
 
       if (flag('json')) {
