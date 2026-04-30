@@ -45,7 +45,7 @@ function sanitizeFtsQuery(query) {
     .split(' ')
     .filter(Boolean);
   if (terms.length === 0) return '';
-  return terms.join(' ');
+  return terms.join(' OR ');
 }
 
 // --- CliDriver ---
