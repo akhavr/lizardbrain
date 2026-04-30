@@ -38,15 +38,26 @@ function mergeRRF(resultSets, K = 60) {
   return merged;
 }
 
-const TYPE_BASE_SCORES = {
-  decision: 620,
-  topic: 610,
-  task: 600,
-  question: 590,
-  member: 580,
-  event: 570,
-  fact: 560,
+const DEFAULT_SCORING = {
+  base: { decision: 620, topic: 610, task: 600, question: 590, member: 580, event: 570, fact: 560 },
+  confidencePenalty: 60,
+  factLikeBonus: 35,
+  timeline: { decision: 70, topic: 65, task: 60, event: 55, fact: 40, member: 15 },
+  decision: { decision: 85, topic: 35, event: 30, fact: 25, task: 20, question: 10 },
+  responsibility: { question: 75, task: 60, member: 45, fact: 35, event: 25, decision: 20, topic: 10 },
 };
+
+function mergeScoring(defaults, overrides = {}) {
+  const result = { ...defaults };
+  for (const key of Object.keys(overrides)) {
+    if (typeof defaults[key] === 'object' && typeof overrides[key] === 'object') {
+      result[key] = { ...defaults[key], ...overrides[key] };
+    } else if (overrides[key] !== undefined) {
+      result[key] = overrides[key];
+    }
+  }
+  return result;
+}
 
 function analyzeQueryIntent(query) {
   const normalized = String(query || '').toLowerCase();
@@ -60,8 +71,8 @@ function analyzeQueryIntent(query) {
 }
 
 function scoreFtsResult(source, row, rank, intent, opts = {}) {
-  const confidencePenalty = opts.confidencePenalty ?? 60;
-  let score = TYPE_BASE_SCORES[source] || 0;
+  const scoring = mergeScoring(DEFAULT_SCORING, opts.scoring);
+  let score = scoring.base[source] || 0;
 
   score += Math.max(0, 30 - (rank * 3));
 
@@ -69,33 +80,14 @@ function scoreFtsResult(source, row, rank, intent, opts = {}) {
     const confidence = Number(row.confidence);
     if (Number.isFinite(confidence)) {
       score += Math.max(0, (confidence - 0.5) * 40);
-      score -= Math.max(0, (0.8 - confidence) * confidencePenalty);
+      score -= Math.max(0, (0.8 - confidence) * scoring.confidencePenalty);
     }
-    if (intent.factLike) score += 35;
+    if (intent.factLike) score += scoring.factLikeBonus;
   }
 
-  if (intent.timeline) {
-    if (source === 'topic') score += 65;
-    if (source === 'decision') score += 70;
-    if (source === 'task') score += 60;
-    if (source === 'event') score += 45;
-    if (source === 'member') score += 15;
-  }
-
-  if (intent.decision) {
-    if (source === 'decision') score += 85;
-    if (source === 'topic') score += 35;
-    if (source === 'task') score += 20;
-    if (source === 'question') score += 10;
-  }
-
-  if (intent.responsibility || intent.question) {
-    if (source === 'question') score += 75;
-    if (source === 'task') score += 60;
-    if (source === 'member') score += 45;
-    if (source === 'decision') score += 20;
-    if (source === 'topic') score += 10;
-  }
+  if (intent.timeline) score += scoring.timeline[source] || 0;
+  if (intent.decision) score += scoring.decision[source] || 0;
+  if (intent.responsibility || intent.question) score += scoring.responsibility[source] || 0;
 
   return score;
 }
@@ -595,9 +587,9 @@ function vecSearch(driver, queryEmbedding, limit, modelId, conversationId) {
  * @returns {Promise<{mode: 'hybrid'|'fts5', results: Array}>}
  */
 async function search(driver, query, options = {}) {
-  const { limit = 10, ftsOnly = false, embeddingConfig = null, conversationId = null, confidencePenalty = 60 } = options;
+  const { limit = 10, ftsOnly = false, embeddingConfig = null, conversationId = null, scoring = {} } = options;
   const ftsLimit = limit * 2;
-  const ftsOpts = { confidencePenalty };
+  const ftsOpts = { scoring };
 
   const ftsResults = ftsSearch(driver, query, ftsLimit, conversationId, ftsOpts);
 
@@ -649,4 +641,4 @@ async function search(driver, query, options = {}) {
   return { mode: 'fts5', results };
 }
 
-module.exports = { search, mergeRRF, ftsSearch, vecSearch };
+module.exports = { search, mergeRRF, ftsSearch, vecSearch, DEFAULT_SCORING };

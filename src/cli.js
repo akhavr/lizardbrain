@@ -148,12 +148,28 @@ async function main() {
       migrate(driver);
       const { search: hybridSearch } = require('./search');
       const embCfg = (cfg.embedding?.enabled && cfg.embedding?.apiKey) ? cfg.embedding : null;
+
+      // Build scoring config from file + CLI overrides
+      const scoring = { ...(cfg.scoring || {}) };
+      if (flagValue('confidence-penalty')) scoring.confidencePenalty = parseInt(flagValue('confidence-penalty'));
+      if (flagValue('factlike-bonus')) scoring.factLikeBonus = parseInt(flagValue('factlike-bonus'));
+      // Intent bonuses: --timeline-fact, --timeline-event, --decision-fact, etc.
+      for (const intent of ['timeline', 'decision', 'responsibility']) {
+        for (const entity of ['fact', 'event', 'topic', 'task', 'question', 'member', 'decision']) {
+          const flagName = `${intent}-${entity}`;
+          if (flagValue(flagName)) {
+            scoring[intent] = scoring[intent] || {};
+            scoring[intent][entity] = parseInt(flagValue(flagName));
+          }
+        }
+      }
+
       const result = await hybridSearch(driver, queryText, {
         limit: parseInt(args[args.indexOf('--limit') + 1]) || 10,
         ftsOnly: flag('fts-only'),
         embeddingConfig: embCfg,
         conversationId: flagValue('conversation') || null,
-        confidencePenalty: flagValue('confidence-penalty') ? parseInt(flagValue('confidence-penalty')) : 60,
+        scoring,
       });
 
       if (flag('json')) {
