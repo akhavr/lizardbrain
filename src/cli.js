@@ -152,6 +152,9 @@ async function main() {
       // Build scoring config from file + CLI overrides
       const scoring = { ...(cfg.scoring || {}) };
       if (flagValue('confidence-penalty')) scoring.confidencePenalty = parseInt(flagValue('confidence-penalty'));
+      if (flagValue('confidence-bonus')) scoring.confidenceBonus = parseInt(flagValue('confidence-bonus'));
+      if (flagValue('rank-bonus-max')) scoring.rankBonusMax = parseInt(flagValue('rank-bonus-max'));
+      if (flagValue('rank-bonus-decay')) scoring.rankBonusDecay = parseInt(flagValue('rank-bonus-decay'));
       if (flagValue('factlike-bonus')) scoring.factLikeBonus = parseInt(flagValue('factlike-bonus'));
       // Intent bonuses: --timeline-fact, --timeline-event, --decision-fact, etc.
       for (const intent of ['timeline', 'decision', 'responsibility']) {

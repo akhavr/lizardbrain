@@ -40,7 +40,10 @@ function mergeRRF(resultSets, K = 60) {
 
 const DEFAULT_SCORING = {
   base: { decision: 600, topic: 600, task: 600, question: 600, member: 600, event: 600, fact: 600 },
+  rankBonusMax: 30,
+  rankBonusDecay: 3,
   confidencePenalty: 30,
+  confidenceBonus: 40,
   factLikeBonus: 35,
   timeline: { decision: 70, topic: 65, task: 60, event: 55, fact: 40, member: 15 },
   decision: { decision: 85, topic: 35, event: 30, fact: 25, task: 20, question: 10 },
@@ -74,12 +77,12 @@ function scoreFtsResult(source, row, rank, intent, opts = {}) {
   const scoring = mergeScoring(DEFAULT_SCORING, opts.scoring);
   let score = scoring.base[source] || 0;
 
-  score += Math.max(0, 30 - (rank * 3));
+  score += Math.max(0, scoring.rankBonusMax - (rank * scoring.rankBonusDecay));
 
   if (source === 'fact') {
     const confidence = Number(row.confidence);
     if (Number.isFinite(confidence)) {
-      score += Math.max(0, (confidence - 0.5) * 40);
+      score += Math.max(0, (confidence - 0.5) * scoring.confidenceBonus);
       score -= Math.max(0, (0.8 - confidence) * scoring.confidencePenalty);
     }
     if (intent.factLike) score += scoring.factLikeBonus;
