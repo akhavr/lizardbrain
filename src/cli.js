@@ -7,6 +7,7 @@
  *   lizardbrain extract [--dry-run] [--reprocess] Run extraction pipeline
  *   lizardbrain stats                             Show database statistics
  *   lizardbrain search <query>                    Search facts and topics
+ *   lizardbrain list --type <entity>              List extracted entities
  *   lizardbrain who <keyword>                     Find members with expertise
  *
  * Configuration:
@@ -20,6 +21,7 @@ const config = require('./config');
 const { createDriver, dbExists } = require('./driver');
 const { PROFILES, PROFILE_NAMES, ALL_ENTITIES, getProfile, buildCustomProfile } = require('./profiles');
 const { migrate } = require('./schema');
+const store = require('./store');
 
 const args = process.argv.slice(2);
 const command = args[0];
@@ -188,6 +190,49 @@ async function main() {
         console.log('');
       }
       driver.close();
+      break;
+    }
+
+    case 'list': {
+      if (!dbExists(cfg.memoryDbPath)) {
+        console.log('Memory database not found. Run `lizardbrain init` first.');
+        process.exit(1);
+      }
+
+      const entityType = flagValue('type') || args.find(a => !a.startsWith('--') && a !== command);
+      if (!entityType) {
+        console.log(`Usage: lizardbrain list --type <entity> [--limit N] [--json]`);
+        console.log(`Valid entity types: ${ALL_ENTITIES.join(', ')}`);
+        process.exit(1);
+      }
+
+      if (!ALL_ENTITIES.includes(entityType)) {
+        console.log(`Unknown entity type "${entityType}". Valid types: ${ALL_ENTITIES.join(', ')}`);
+        process.exit(1);
+      }
+
+      const driver = createDriver(cfg.memoryDbPath);
+      migrate(driver);
+      const items = store.listEntities(driver, entityType, flagValue('limit') || 10);
+      driver.close();
+
+      if (flag('json')) {
+        console.log(JSON.stringify(items, null, 2));
+      } else {
+        console.log(`\n=== ${entityType} ===`);
+        if (items.length === 0) {
+          console.log(`No ${entityType} found.`);
+        } else {
+          for (const item of items) {
+            console.log(`  [${item.id}] ${item.content}`);
+            for (const [key, value] of Object.entries(item.metadata || {})) {
+              if (value === null || value === undefined || value === '') continue;
+              console.log(`    ${key}: ${value}`);
+            }
+            console.log('');
+          }
+        }
+      }
       break;
     }
 
@@ -568,6 +613,7 @@ Commands:
   stats                               Show database statistics
   health [--json]                     Check system health
   search <query> [--json] [--fts-only] [--limit N] [--conversation <id>]  Search knowledge
+  list --type <entity> [--json] [--limit N]  List extracted entities
   who <keyword>                       Find members by expertise
   roster [--output path]              Generate member roster
   reset-cursor [--to <id>]            Reset extraction cursor

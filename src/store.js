@@ -876,6 +876,188 @@ function searchEvents(driver, query, limit = 10) {
   );
 }
 
+const LIST_ENTITY_DEFS = {
+  members: {
+    query(limit) {
+      return `SELECT id, username, display_name, expertise, projects, first_seen, last_seen, updated_at
+              FROM members
+              WHERE superseded_by IS NULL
+              ORDER BY last_seen DESC, id DESC
+              LIMIT ${limit}`;
+    },
+    normalize(row) {
+      return {
+        type: 'members',
+        id: row.id,
+        content: row.display_name || row.username || '',
+        username: row.username || '',
+        metadata: {
+          expertise: row.expertise || '',
+          projects: row.projects || '',
+          first_seen: row.first_seen || null,
+          last_seen: row.last_seen || null,
+          updated_at: row.updated_at || null,
+        },
+      };
+    },
+  },
+  facts: {
+    query(limit) {
+      return `SELECT f.id, f.content, f.category, f.confidence, f.tags, f.message_date, f.valid_until, m.display_name AS source_member
+              FROM facts f
+              LEFT JOIN members m ON f.source_member_id = m.id
+              WHERE f.superseded_by IS NULL
+                AND (f.valid_until IS NULL OR f.valid_until >= datetime('now'))
+              ORDER BY f.created_at DESC, f.id DESC
+              LIMIT ${limit}`;
+    },
+    normalize(row) {
+      return {
+        type: 'facts',
+        id: row.id,
+        content: row.content || '',
+        metadata: {
+          category: row.category || '',
+          confidence: row.confidence,
+          source_member: row.source_member || null,
+          tags: row.tags || '',
+          message_date: row.message_date || null,
+          valid_until: row.valid_until || null,
+        },
+      };
+    },
+  },
+  topics: {
+    query(limit) {
+      return `SELECT id, name, summary, participants, tags, message_date
+              FROM topics
+              WHERE superseded_by IS NULL
+              ORDER BY created_at DESC, id DESC
+              LIMIT ${limit}`;
+    },
+    normalize(row) {
+      return {
+        type: 'topics',
+        id: row.id,
+        content: row.name || '',
+        metadata: {
+          summary: row.summary || '',
+          participants: row.participants || '',
+          tags: row.tags || '',
+          message_date: row.message_date || null,
+        },
+      };
+    },
+  },
+  decisions: {
+    query(limit) {
+      return `SELECT id, description, participants, context, status, tags, message_date
+              FROM decisions
+              WHERE superseded_by IS NULL
+              ORDER BY created_at DESC, id DESC
+              LIMIT ${limit}`;
+    },
+    normalize(row) {
+      return {
+        type: 'decisions',
+        id: row.id,
+        content: row.description || '',
+        metadata: {
+          status: row.status || 'proposed',
+          participants: row.participants || '',
+          context: row.context || '',
+          tags: row.tags || '',
+          message_date: row.message_date || null,
+        },
+      };
+    },
+  },
+  tasks: {
+    query(limit) {
+      return `SELECT t.id, t.description, t.assignee, t.deadline, t.status, t.tags, t.message_date, m.display_name AS source_member
+              FROM tasks t
+              LEFT JOIN members m ON t.source_member_id = m.id
+              WHERE t.superseded_by IS NULL
+              ORDER BY t.created_at DESC, t.id DESC
+              LIMIT ${limit}`;
+    },
+    normalize(row) {
+      return {
+        type: 'tasks',
+        id: row.id,
+        content: row.description || '',
+        metadata: {
+          status: row.status || 'open',
+          assignee: row.assignee || '',
+          deadline: row.deadline || null,
+          source_member: row.source_member || null,
+          tags: row.tags || '',
+          message_date: row.message_date || null,
+        },
+      };
+    },
+  },
+  questions: {
+    query(limit) {
+      return `SELECT id, question, asker, answer, answered_by, status, tags, message_date
+              FROM questions
+              WHERE superseded_by IS NULL
+              ORDER BY created_at DESC, id DESC
+              LIMIT ${limit}`;
+    },
+    normalize(row) {
+      return {
+        type: 'questions',
+        id: row.id,
+        content: row.question || '',
+        metadata: {
+          status: row.status || 'open',
+          asker: row.asker || '',
+          answer: row.answer || '',
+          answered_by: row.answered_by || '',
+          tags: row.tags || '',
+          message_date: row.message_date || null,
+        },
+      };
+    },
+  },
+  events: {
+    query(limit) {
+      return `SELECT id, name, description, event_date, location, attendees, tags, message_date
+              FROM events
+              WHERE superseded_by IS NULL
+              ORDER BY created_at DESC, id DESC
+              LIMIT ${limit}`;
+    },
+    normalize(row) {
+      return {
+        type: 'events',
+        id: row.id,
+        content: row.name || '',
+        metadata: {
+          description: row.description || '',
+          event_date: row.event_date || null,
+          location: row.location || '',
+          attendees: row.attendees || '',
+          tags: row.tags || '',
+          message_date: row.message_date || null,
+        },
+      };
+    },
+  },
+};
+
+function listEntities(driver, entityType, limit = 10) {
+  const def = LIST_ENTITY_DEFS[entityType];
+  if (!def) {
+    throw new Error(`Unknown entity type "${entityType}". Valid types: ${Object.keys(LIST_ENTITY_DEFS).join(', ')}`);
+  }
+
+  const safeLimit = Math.max(1, parseInt(limit) || 10);
+  const rows = driver.read(def.query(safeLimit));
+  return rows.map(def.normalize);
+}
+
 function generateRoster(driver, { maxExpertise = 5, maxProjects = 3, title = 'Members', memberLabels = null } = {}) {
   const members = driver.read('SELECT display_name, expertise, projects FROM members ORDER BY display_name');
   const projLabel = memberLabels?.rosterProjects || 'builds';
@@ -906,6 +1088,7 @@ module.exports = {
   searchTasks,
   searchQuestions,
   searchEvents,
+  listEntities,
   whoKnows,
   generateRoster,
   updateDecisionStatus,
