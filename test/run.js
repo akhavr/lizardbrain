@@ -2599,6 +2599,132 @@ function testMcpStdoutSafety() {
   assert(!contextClean.includes('console.log'), 'context.js does not use console.log');
 }
 
+function testVisibilityColumnExists() {
+  console.log('\n--- Test: visibility column exists in new DB ---');
+
+  const testDb = path.join(TEST_DIR, 'visibility_test.db');
+  if (fs.existsSync(testDb)) fs.unlinkSync(testDb);
+
+  lizardbrain.init(testDb, { profile: 'full' });
+
+  // Check all 7 entity tables have visibility column
+  const tables = ['facts', 'members', 'topics', 'decisions', 'tasks', 'questions', 'events'];
+  for (const table of tables) {
+    const columns = execSync(`sqlite3 "${testDb}" "PRAGMA table_info(${table})"`, { encoding: 'utf-8' });
+    assert(columns.includes('visibility'), `${table} table has visibility column`);
+  }
+
+  // Check default value
+  const defaultVal = execSync(`sqlite3 -json "${testDb}" "SELECT sql FROM sqlite_master WHERE type='table' AND name='facts'"`, { encoding: 'utf-8' });
+  assert(defaultVal.includes("DEFAULT 'public'"), 'visibility column has default public');
+
+  fs.unlinkSync(testDb);
+}
+
+function testVisibilityMigration() {
+  console.log('\n--- Test: visibility column migration ---');
+
+  const testDb = path.join(TEST_DIR, 'visibility_migrate.db');
+  if (fs.existsSync(testDb)) fs.unlinkSync(testDb);
+
+  // Create a v1.0 database without visibility column
+  execSync(`sqlite3 "${testDb}"`, {
+    input: `
+      CREATE TABLE facts (id INTEGER PRIMARY KEY, content TEXT, category TEXT);
+      CREATE TABLE members (id INTEGER PRIMARY KEY, display_name TEXT);
+      CREATE TABLE topics (id INTEGER PRIMARY KEY, name TEXT);
+      CREATE TABLE decisions (id INTEGER PRIMARY KEY, description TEXT);
+      CREATE TABLE tasks (id INTEGER PRIMARY KEY, description TEXT);
+      CREATE TABLE questions (id INTEGER PRIMARY KEY, question TEXT);
+      CREATE TABLE events (id INTEGER PRIMARY KEY, name TEXT);
+      CREATE TABLE lizardbrain_meta (key TEXT PRIMARY KEY, value TEXT, updated_at TEXT);
+      INSERT INTO lizardbrain_meta (key, value) VALUES ('schema_version', '1.0');
+    `,
+    stdio: ['pipe', 'pipe', 'pipe'],
+  });
+
+  // Run migration
+  const driver = createDriver(testDb);
+  const result = migrate(driver);
+
+  assert(result.migrated === true, 'Migration ran');
+  assert(result.message.includes('1.1'), 'Migrated to v1.1');
+
+  // Check all tables have visibility column
+  const tables = ['facts', 'members', 'topics', 'decisions', 'tasks', 'questions', 'events'];
+  for (const table of tables) {
+    const columns = execSync(`sqlite3 "${testDb}" "PRAGMA table_info(${table})"`, { encoding: 'utf-8' });
+    assert(columns.includes('visibility'), `${table} table has visibility column after migration`);
+  }
+
+  driver.close();
+  fs.unlinkSync(testDb);
+}
+
+function testVisibilityStored() {
+  console.log('\n--- Test: visibility stored on extraction ---');
+
+  const testDb = path.join(TEST_DIR, 'visibility_store.db');
+  if (fs.existsSync(testDb)) fs.unlinkSync(testDb);
+
+  lizardbrain.init(testDb, { profile: 'full' });
+  const driver = createDriver(testDb);
+
+  // Extract with default visibility (public)
+  store.processExtraction(driver, {
+    members: [{ display_name: 'Public Member', expertise: 'testing' }],
+    facts: [{ category: 'test', content: 'Public fact one' }],
+    topics: [{ name: 'Public topic' }],
+    decisions: [{ description: 'Public decision' }],
+    tasks: [{ description: 'Public task' }],
+    questions: [{ question: 'Public question?' }],
+    events: [{ name: 'Public event' }],
+  }, '2026-01-01');
+
+  // Verify default visibility is public
+  const publicFact = driver.read("SELECT visibility FROM facts WHERE content = 'Public fact one'");
+  assert(publicFact.length > 0 && publicFact[0].visibility === 'public', 'Default visibility is public');
+
+  const publicMember = driver.read("SELECT visibility FROM members WHERE display_name = 'Public Member'");
+  assert(publicMember.length > 0 && publicMember[0].visibility === 'public', 'Default visibility on member');
+
+  // Extract with explicit visibility
+  store.processExtraction(driver, {
+    members: [{ display_name: 'Private Member', expertise: 'security' }],
+    facts: [{ category: 'test', content: 'Private fact two' }],
+    topics: [{ name: 'Private topic' }],
+    decisions: [{ description: 'Private decision' }],
+    tasks: [{ description: 'Private task' }],
+    questions: [{ question: 'Private question?' }],
+    events: [{ name: 'Private event' }],
+  }, '2026-01-02', { visibility: 'private' });
+
+  // Verify private visibility is stored
+  const privateFact = driver.read("SELECT visibility FROM facts WHERE content = 'Private fact two'");
+  assert(privateFact.length > 0 && privateFact[0].visibility === 'private', 'Private visibility stored');
+
+  const privateMember = driver.read("SELECT visibility FROM members WHERE display_name = 'Private Member'");
+  assert(privateMember.length > 0 && privateMember[0].visibility === 'private', 'Private visibility on member');
+
+  const privateTopic = driver.read("SELECT visibility FROM topics WHERE name = 'Private topic'");
+  assert(privateTopic.length > 0 && privateTopic[0].visibility === 'private', 'Private visibility on topic');
+
+  const privateDecision = driver.read("SELECT visibility FROM decisions WHERE description = 'Private decision'");
+  assert(privateDecision.length > 0 && privateDecision[0].visibility === 'private', 'Private visibility on decision');
+
+  const privateTask = driver.read("SELECT visibility FROM tasks WHERE description = 'Private task'");
+  assert(privateTask.length > 0 && privateTask[0].visibility === 'private', 'Private visibility on task');
+
+  const privateQuestion = driver.read("SELECT visibility FROM questions WHERE question = 'Private question?'");
+  assert(privateQuestion.length > 0 && privateQuestion[0].visibility === 'private', 'Private visibility on question');
+
+  const privateEvent = driver.read("SELECT visibility FROM events WHERE name = 'Private event'");
+  assert(privateEvent.length > 0 && privateEvent[0].visibility === 'private', 'Private visibility on event');
+
+  driver.close();
+  fs.unlinkSync(testDb);
+}
+
 // --- Run ---
 
 async function runAll() {
@@ -2667,6 +2793,9 @@ async function runAll() {
   await testMcpIntegration();
   testMcpStdoutSafety();
   await testUrlEnrichment();
+  testVisibilityColumnExists();
+  testVisibilityMigration();
+  testVisibilityStored();
 
   console.log(`\n=== Results: ${passed} passed, ${failed} failed ===\n`);
   cleanup();
