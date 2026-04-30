@@ -68,7 +68,7 @@ function scoreFtsResult(source, row, rank, intent) {
     const confidence = Number(row.confidence);
     if (Number.isFinite(confidence)) {
       score += Math.max(0, (confidence - 0.5) * 40);
-      score -= Math.max(0, (0.8 - confidence) * 120);
+      score -= Math.max(0, (0.8 - confidence) * 60);
     }
     if (intent.factLike) score += 35;
   }
