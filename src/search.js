@@ -45,8 +45,8 @@ const DEFAULT_SCORING = {
   confidencePenalty: 30,
   confidenceBonus: 40,
   factLikeBonus: 35,
-  timeline: { decision: 70, topic: 65, task: 60, event: 55, fact: 40, member: 15 },
-  decision: { decision: 85, topic: 35, event: 30, fact: 25, task: 20, question: 10 },
+  timeline: { decision: 70, topic: 65, task: 60, event: 55, fact: 40, member: 35 },
+  decision: { decision: 85, topic: 35, member: 30, event: 30, fact: 25, task: 20, question: 10 },
   responsibility: { question: 75, task: 60, member: 45, fact: 35, event: 25, decision: 20, topic: 10 },
 };
 
