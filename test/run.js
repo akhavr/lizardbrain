@@ -2533,6 +2533,56 @@ async function testMcpIntegration() {
   driver.close();
 }
 
+function testConfigEnvOverride() {
+  console.log('\n--- Test: config env override ---');
+
+  const config = require('../src/config');
+
+  // Create a config file with values that should be overridden
+  const configPath = path.join(TEST_DIR, 'override-test.json');
+  fs.writeFileSync(configPath, JSON.stringify({
+    memoryDbPath: './from-config.db',
+    profile: 'team',
+    llm: { baseUrl: 'http://config-url', apiKey: 'config-key', model: 'config-model' },
+    embedding: { baseUrl: 'http://config-embed', apiKey: 'embed-config-key', model: 'embed-config-model' },
+  }));
+
+  // Save original env vars
+  const origEnv = { ...process.env };
+
+  // Set env vars that should override config
+  process.env.LIZARDBRAIN_DB_PATH = './from-env.db';
+  process.env.LIZARDBRAIN_PROFILE = 'full';
+  process.env.LIZARDBRAIN_LLM_BASE_URL = 'http://env-url';
+  process.env.LIZARDBRAIN_LLM_API_KEY = 'env-key';
+  process.env.LIZARDBRAIN_LLM_MODEL = 'env-model';
+  process.env.LIZARDBRAIN_EMBEDDING_BASE_URL = 'http://env-embed';
+  process.env.LIZARDBRAIN_EMBEDDING_API_KEY = 'embed-env-key';
+  process.env.LIZARDBRAIN_EMBEDDING_MODEL = 'embed-env-model';
+
+  // Clear require cache so config reloads
+  delete require.cache[require.resolve('../src/config')];
+  const freshConfig = require('../src/config');
+  const loaded = freshConfig.load(configPath);
+
+  // Verify env vars override config file
+  assert(loaded.memoryDbPath === './from-env.db', 'env overrides memoryDbPath');
+  assert(loaded.profile === 'full', 'env overrides profile');
+  assert(loaded.llm.baseUrl === 'http://env-url', 'env overrides llm.baseUrl');
+  assert(loaded.llm.apiKey === 'env-key', 'env overrides llm.apiKey');
+  assert(loaded.llm.model === 'env-model', 'env overrides llm.model');
+  assert(loaded.embedding.baseUrl === 'http://env-embed', 'env overrides embedding.baseUrl');
+  assert(loaded.embedding.apiKey === 'embed-env-key', 'env overrides embedding.apiKey');
+  assert(loaded.embedding.model === 'embed-env-model', 'env overrides embedding.model');
+
+  // Restore env
+  for (const key of Object.keys(process.env)) {
+    if (key.startsWith('LIZARDBRAIN_')) delete process.env[key];
+  }
+  Object.assign(process.env, origEnv);
+  delete require.cache[require.resolve('../src/config')];
+}
+
 function testMcpStdoutSafety() {
   console.log('\n--- Test: mcp-stdout-safety ---');
 
@@ -2729,6 +2779,7 @@ async function runAll() {
   testContextAssembly();
   testExtractFromText();
   testBuildExtractionSchema();
+  testConfigEnvOverride();
   testCreateProvider();
   await testMcpToolHandlers();
   await testMcpIntegration();
