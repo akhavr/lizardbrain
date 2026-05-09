@@ -2446,12 +2446,16 @@ async function testMcpToolHandlers() {
   assert(st1.data.members >= 2, 'get_stats: correct member count');
 
   // --- add_knowledge ---
+  const sourceUrl = 'https://t.me/c/123/456';
   const ak1 = await handlers.add_knowledge({
     facts: [{ content: 'New fact from MCP', category: 'tool', tags: 'mcp' }],
     sourceAgent: 'test-agent',
+    sourceUrl,
   });
   assert(!ak1.isError, 'add_knowledge: no error');
   assert(ak1.data.inserted.facts >= 1, 'add_knowledge: fact inserted');
+  const ak1Source = driver.read("SELECT source_url FROM facts WHERE content = 'New fact from MCP'");
+  assert(ak1Source.length > 0 && ak1Source[0].source_url === sourceUrl, 'add_knowledge: source_url stored');
 
   // add_knowledge dedup
   const ak2 = await handlers.add_knowledge({
@@ -2459,6 +2463,31 @@ async function testMcpToolHandlers() {
   });
   assert(!ak2.isError, 'add_knowledge dedup: no error');
   assert(ak2.data.inserted.facts === 0, 'add_knowledge dedup: duplicate skipped');
+
+  // --- ingest ---
+  const ingestSourceUrl = 'https://t.me/c/123/789';
+  const originalExtractFromText = llm.extractFromText;
+  llm.extractFromText = async () => ({
+    members: [{ display_name: 'Ingest Member', username: 'ingest-member', expertise: 'MCP ingest' }],
+    facts: [{ content: 'Ingested fact from MCP', category: 'tool' }],
+  });
+  const ingestHandlers = mcp.createHandlers(driver, {
+    llm: { baseUrl: 'https://example.com', apiKey: 'test-key', model: 'test-model' },
+  });
+  try {
+    const ingestResult = await ingestHandlers.ingest({
+      text: 'Ingest this text',
+      sourceAgent: 'ingest-agent',
+      sourceUrl: ingestSourceUrl,
+    });
+    assert(!ingestResult.isError, 'ingest: no error');
+    const ingestFact = driver.read("SELECT source_url FROM facts WHERE content = 'Ingested fact from MCP'");
+    assert(ingestFact.length > 0 && ingestFact[0].source_url === ingestSourceUrl, 'ingest: fact source_url stored');
+    const ingestMember = driver.read("SELECT source_url FROM members WHERE display_name = 'Ingest Member'");
+    assert(ingestMember.length > 0 && ingestMember[0].source_url === ingestSourceUrl, 'ingest: member source_url stored');
+  } finally {
+    llm.extractFromText = originalExtractFromText;
+  }
 
   // --- update_entity ---
   const tasks = driver.read('SELECT id FROM tasks LIMIT 1');

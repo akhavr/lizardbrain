@@ -108,6 +108,7 @@ function createHandlers(driver, config) {
         const counts = store.processExtraction(driver, extracted, messageDate, {
           sourceAgent: args.sourceAgent || null,
           conversationId: args.conversationId || null,
+          sourceUrl: args.sourceUrl || args.source_url || config?.sourceUrl || config?.source_url || config?.source?.url || null,
         });
         return {
           isError: false,
@@ -140,6 +141,7 @@ function createHandlers(driver, config) {
         const messageDate = new Date().toISOString();
         const counts = store.processExtraction(driver, extracted, messageDate, {
           sourceAgent: args.sourceAgent || null,
+          sourceUrl: args.sourceUrl || args.source_url || config?.sourceUrl || config?.source_url || config?.source?.url || null,
         });
         return {
           isError: false,
