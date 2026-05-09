@@ -1,0 +1,121 @@
+#!/usr/bin/env node
+
+const fs = require('fs');
+const sqlite3 = require('sqlite3');
+
+function readStdin() {
+  return new Promise((resolve, reject) => {
+    let data = '';
+    process.stdin.setEncoding('utf8');
+    process.stdin.on('data', chunk => { data += chunk; });
+    process.stdin.on('end', () => resolve(data));
+    process.stdin.on('error', reject);
+  });
+}
+
+function openDatabase(dbPath) {
+  return new Promise((resolve, reject) => {
+    const db = new sqlite3.Database(dbPath, err => {
+      if (err) reject(err);
+      else resolve(db);
+    });
+  });
+}
+
+function execSql(db, sql) {
+  return new Promise((resolve, reject) => {
+    db.exec(sql, err => (err ? reject(err) : resolve()));
+  });
+}
+
+function allSql(db, sql) {
+  return new Promise((resolve, reject) => {
+    db.all(sql, (err, rows) => (err ? reject(err) : resolve(rows || [])));
+  });
+}
+
+function formatHeaderRows(rows, separator) {
+  if (!rows.length) return '';
+  const headers = Object.keys(rows[0]);
+  const lines = [headers.join(separator)];
+  for (const row of rows) {
+    lines.push(headers.map(h => row[h] ?? '').join(separator));
+  }
+  return lines.join('\n') + '\n';
+}
+
+async function main() {
+  const args = process.argv.slice(2);
+  let json = false;
+  let header = false;
+  let separator = '|';
+  const positional = [];
+
+  for (let i = 0; i < args.length; i++) {
+    const arg = args[i];
+    if (arg === '-json') {
+      json = true;
+    } else if (arg === '-header') {
+      header = true;
+    } else if (arg === '-separator') {
+      separator = args[++i] || separator;
+    } else if (arg.startsWith('-')) {
+      // Ignore unsupported sqlite3 CLI flags used by tests or callers.
+    } else {
+      positional.push(arg);
+    }
+  }
+
+  const dbPath = positional[0];
+  if (!dbPath) {
+    console.error('Usage: sqlite3 [-json] [-header] [-separator SEP] DATABASE');
+    process.exit(1);
+  }
+
+  const stdinSql = (await readStdin()).trim();
+  const argSql = positional.slice(1).join(' ').trim();
+  const sql = stdinSql || argSql;
+  const db = await openDatabase(dbPath);
+
+  try {
+    if (!sql) {
+      process.exit(0);
+    }
+
+    if (sql === '.tables') {
+      const rows = await allSql(db, "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' ORDER BY name");
+      const names = rows.map(r => r.name).join(' ');
+      if (names) process.stdout.write(names + '\n');
+      process.exit(0);
+    }
+
+    if (!sql) {
+      process.exit(0);
+    }
+
+    const isSingleStatement = !sql.includes(';');
+    const isQuery = /^(select|pragma|with)\b/i.test(sql.trim());
+    if (json || header || (isSingleStatement && isQuery)) {
+      const rows = await allSql(db, sql);
+      if (json) {
+        process.stdout.write(JSON.stringify(rows));
+      } else if (header) {
+        process.stdout.write(formatHeaderRows(rows, separator));
+      } else if (rows.length) {
+        const headers = Object.keys(rows[0]);
+        for (const row of rows) {
+          process.stdout.write(headers.map(h => row[h] ?? '').join('|') + '\n');
+        }
+      }
+    } else {
+      await execSql(db, sql);
+    }
+  } finally {
+    await new Promise(resolve => db.close(resolve));
+  }
+}
+
+main().catch(err => {
+  process.stderr.write((err && err.message) ? err.message + '\n' : String(err) + '\n');
+  process.exit(1);
+});

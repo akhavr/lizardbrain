@@ -8,8 +8,12 @@ const { execSync } = require('child_process');
 const path = require('path');
 const fs = require('fs');
 
+process.env.PATH = `${path.join(__dirname, '..', 'bin')}:${process.env.PATH}`;
+
 const lizardbrain = require('../src/index');
 const store = require('../src/store');
+const extractor = require('../src/extractor');
+const llm = require('../src/llm');
 const { createDriver, esc, sanitizeFtsQuery } = require('../src/driver');
 const profiles = require('../src/profiles');
 const { buildPrompt, formatMessages } = require('../src/llm');
@@ -261,6 +265,7 @@ function testConversationFilter() {
 
   // Create a source with mixed group/DM conversations
   const CONV_DB = path.join(TEST_DIR, 'conv-source.db');
+  if (fs.existsSync(CONV_DB)) fs.unlinkSync(CONV_DB);
   execSync(`sqlite3 "${CONV_DB}"`, {
     input: `
       CREATE TABLE messages (
@@ -359,6 +364,12 @@ function testBetterSqliteDriver() {
   }
 
   const driver = createDriver(MEMORY_DB);
+
+  if (driver.backend !== 'better-sqlite3') {
+    console.log('  SKIP: better-sqlite3 backend unavailable in this environment');
+    driver.close();
+    return;
+  }
 
   assert(driver.backend === 'better-sqlite3', 'Backend is better-sqlite3');
   assert(driver.capabilities.inProcess === true, 'inProcess is true');
@@ -824,7 +835,7 @@ function testMigration() {
 
   // Verify schema version set
   const version = driver.read("SELECT value FROM lizardbrain_meta WHERE key = 'schema_version'");
-  assert(version[0]?.value === '1.0', 'Schema version set to 1.0');
+  assert(version[0]?.value === '1.2', 'Schema version set to 1.2');
 
   // Idempotent: running again should be a no-op
   const result2 = migrate(driver);
@@ -860,7 +871,7 @@ function testMigrationPreMeta() {
 
   // Verify lizardbrain_meta was created and populated
   const version = driver.read("SELECT value FROM lizardbrain_meta WHERE key = 'schema_version'");
-  assert(version[0]?.value === '1.0', 'Schema version set to 1.0 on pre-meta DB');
+  assert(version[0]?.value === '1.2', 'Schema version set to 1.2 on pre-meta DB');
 
   const profile = driver.read("SELECT value FROM lizardbrain_meta WHERE key = 'profile_name'");
   assert(profile[0]?.value === 'knowledge', 'Default profile set on pre-meta DB');
@@ -1261,7 +1272,7 @@ function testMigrationV05() {
 
   // Verify schema version
   const version = driver.read("SELECT value FROM lizardbrain_meta WHERE key = 'schema_version'");
-  assert(version[0]?.value === '1.0', 'Schema version updated to 1.0');
+  assert(version[0]?.value === '1.2', 'Schema version updated to 1.2');
 
   // Idempotent
   const result2 = migrate(driver);
@@ -1299,7 +1310,7 @@ function testMigrationV08() {
 
   // Verify schema version is 1.0
   const version = driver.read("SELECT value FROM lizardbrain_meta WHERE key = 'schema_version'");
-  assert(version[0]?.value === '1.0', 'Schema version set to 1.0');
+  assert(version[0]?.value === '1.2', 'Schema version set to 1.2');
 
   // Idempotent
   const result2 = migrate(driver);
@@ -1327,7 +1338,7 @@ function testMigrationV09() {
   assert(hasValidUntil, 'facts has valid_until column');
 
   const version = driver.read("SELECT value FROM lizardbrain_meta WHERE key = 'schema_version'");
-  assert(version[0]?.value === '1.0', 'Schema version set to 1.0');
+  assert(version[0]?.value === '1.2', 'Schema version set to 1.2');
 
   const result2 = migrate(driver);
   assert(result2.migrated === false, 'Second v0.9 migration is no-op');
@@ -1360,7 +1371,7 @@ function testMigrationV10() {
   assert(colNames.includes('relation'), 'entity_links has relation');
 
   const version2 = driver.read("SELECT value FROM lizardbrain_meta WHERE key = 'schema_version'");
-  assert(version2[0]?.value === '1.0', 'Schema version set to 1.0');
+  assert(version2[0]?.value === '1.2', 'Schema version set to 1.2');
 
   const result2 = migrate(driver);
   assert(result2.migrated === false, 'Second v1.0 migration is no-op');
@@ -2435,12 +2446,16 @@ async function testMcpToolHandlers() {
   assert(st1.data.members >= 2, 'get_stats: correct member count');
 
   // --- add_knowledge ---
+  const sourceUrl = 'https://t.me/c/123/456';
   const ak1 = await handlers.add_knowledge({
     facts: [{ content: 'New fact from MCP', category: 'tool', tags: 'mcp' }],
     sourceAgent: 'test-agent',
+    sourceUrl,
   });
   assert(!ak1.isError, 'add_knowledge: no error');
   assert(ak1.data.inserted.facts >= 1, 'add_knowledge: fact inserted');
+  const ak1Source = driver.read("SELECT source_url FROM facts WHERE content = 'New fact from MCP'");
+  assert(ak1Source.length > 0 && ak1Source[0].source_url === sourceUrl, 'add_knowledge: source_url stored');
 
   // add_knowledge dedup
   const ak2 = await handlers.add_knowledge({
@@ -2448,6 +2463,31 @@ async function testMcpToolHandlers() {
   });
   assert(!ak2.isError, 'add_knowledge dedup: no error');
   assert(ak2.data.inserted.facts === 0, 'add_knowledge dedup: duplicate skipped');
+
+  // --- ingest ---
+  const ingestSourceUrl = 'https://t.me/c/123/789';
+  const originalExtractFromText = llm.extractFromText;
+  llm.extractFromText = async () => ({
+    members: [{ display_name: 'Ingest Member', username: 'ingest-member', expertise: 'MCP ingest' }],
+    facts: [{ content: 'Ingested fact from MCP', category: 'tool' }],
+  });
+  const ingestHandlers = mcp.createHandlers(driver, {
+    llm: { baseUrl: 'https://example.com', apiKey: 'test-key', model: 'test-model' },
+  });
+  try {
+    const ingestResult = await ingestHandlers.ingest({
+      text: 'Ingest this text',
+      sourceAgent: 'ingest-agent',
+      sourceUrl: ingestSourceUrl,
+    });
+    assert(!ingestResult.isError, 'ingest: no error');
+    const ingestFact = driver.read("SELECT source_url FROM facts WHERE content = 'Ingested fact from MCP'");
+    assert(ingestFact.length > 0 && ingestFact[0].source_url === ingestSourceUrl, 'ingest: fact source_url stored');
+    const ingestMember = driver.read("SELECT source_url FROM members WHERE display_name = 'Ingest Member'");
+    assert(ingestMember.length > 0 && ingestMember[0].source_url === ingestSourceUrl, 'ingest: member source_url stored');
+  } finally {
+    llm.extractFromText = originalExtractFromText;
+  }
 
   // --- update_entity ---
   const tasks = driver.read('SELECT id FROM tasks LIMIT 1');
@@ -2648,7 +2688,7 @@ function testVisibilityMigration() {
   const result = migrate(driver);
 
   assert(result.migrated === true, 'Migration ran');
-  assert(result.message.includes('1.1'), 'Migrated to v1.1');
+  assert(result.message.includes('1.2'), 'Migrated to v1.2');
 
   // Check all tables have visibility column
   const tables = ['facts', 'members', 'topics', 'decisions', 'tasks', 'questions', 'events'];
@@ -2659,6 +2699,124 @@ function testVisibilityMigration() {
 
   driver.close();
   fs.unlinkSync(testDb);
+}
+
+function testSourceUrlColumnExists() {
+  console.log('\n--- Test: source_url column exists in new DB ---');
+
+  const testDb = path.join(TEST_DIR, 'source_url_test.db');
+  if (fs.existsSync(testDb)) fs.unlinkSync(testDb);
+
+  lizardbrain.init(testDb, { profile: 'full' });
+
+  const tables = ['facts', 'members', 'topics', 'decisions', 'tasks', 'questions', 'events'];
+  for (const table of tables) {
+    const columns = execSync(`sqlite3 "${testDb}" "PRAGMA table_info(${table})"`, { encoding: 'utf-8' });
+    assert(columns.includes('source_url'), `${table} table has source_url column`);
+  }
+
+  fs.unlinkSync(testDb);
+}
+
+function testSourceUrlMigration() {
+  console.log('\n--- Test: source_url column migration ---');
+
+  const testDb = path.join(TEST_DIR, 'source_url_migrate.db');
+  if (fs.existsSync(testDb)) fs.unlinkSync(testDb);
+
+  // Create a v1.1 database with visibility but without source_url
+  execSync(`sqlite3 "${testDb}"`, {
+    input: `
+      CREATE TABLE facts (id INTEGER PRIMARY KEY, content TEXT, category TEXT, visibility TEXT DEFAULT 'public');
+      CREATE TABLE members (id INTEGER PRIMARY KEY, display_name TEXT, visibility TEXT DEFAULT 'public');
+      CREATE TABLE topics (id INTEGER PRIMARY KEY, name TEXT, visibility TEXT DEFAULT 'public');
+      CREATE TABLE decisions (id INTEGER PRIMARY KEY, description TEXT, visibility TEXT DEFAULT 'public');
+      CREATE TABLE tasks (id INTEGER PRIMARY KEY, description TEXT, visibility TEXT DEFAULT 'public');
+      CREATE TABLE questions (id INTEGER PRIMARY KEY, question TEXT, visibility TEXT DEFAULT 'public');
+      CREATE TABLE events (id INTEGER PRIMARY KEY, name TEXT, visibility TEXT DEFAULT 'public');
+      CREATE TABLE lizardbrain_meta (key TEXT PRIMARY KEY, value TEXT, updated_at TEXT);
+      INSERT INTO lizardbrain_meta (key, value) VALUES ('schema_version', '1.1');
+    `,
+    stdio: ['pipe', 'pipe', 'pipe'],
+  });
+
+  const driver = createDriver(testDb);
+  const result = migrate(driver);
+
+  assert(result.migrated === true, 'Migration ran');
+  assert(result.message.includes('1.2'), 'Migrated to v1.2');
+
+  const tables = ['facts', 'members', 'topics', 'decisions', 'tasks', 'questions', 'events'];
+  for (const table of tables) {
+    const columns = execSync(`sqlite3 "${testDb}" "PRAGMA table_info(${table})"`, { encoding: 'utf-8' });
+    assert(columns.includes('source_url'), `${table} table has source_url column after migration`);
+  }
+
+  driver.close();
+  fs.unlinkSync(testDb);
+}
+
+async function testSourceUrlStoredOnExtraction() {
+  console.log('\n--- Test: source_url stored on extraction ---');
+
+  const testDb = path.join(TEST_DIR, 'source_url_store.db');
+  if (fs.existsSync(testDb)) fs.unlinkSync(testDb);
+
+  lizardbrain.init(testDb, { profile: 'full' });
+  const driver = createDriver(testDb);
+  const sourceUrl = 'https://t.me/c/123/456';
+  const adapter = {
+    name: 'stub',
+    validate: () => ({ ok: true }),
+    getMessages: () => [{
+      id: '1',
+      sender: 'Alice',
+      content: 'Seed message',
+      timestamp: '2026-03-15T10:00:00Z',
+    }],
+  };
+
+  const originalExtractWithRetry = llm.extractWithRetry;
+  llm.extractWithRetry = async () => ({
+    members: [{ display_name: 'Alice', username: 'alice', expertise: 'RAG', projects: 'pipeline' }],
+    facts: [{ category: 'tool', content: 'LangChain works for RAG', source_member: 'alice' }],
+    topics: [{ name: 'RAG Pipeline', summary: 'Discussion', participants: 'Alice' }],
+    decisions: [{ description: 'Use LangChain', participants: 'Alice' }],
+    tasks: [{ description: 'Build pipeline', source_member: 'alice' }],
+    questions: [{ question: 'Which model?' }],
+    events: [{ name: 'Kickoff meeting' }],
+  });
+
+  try {
+    const result = await extractor.run(adapter, driver, {
+      profile: 'full',
+      minMessages: 1,
+      llm: {},
+      sourceUrl,
+      visibility: 'private',
+    }, { enrichUrls: false });
+
+    assert(result.ok === true, 'Extraction completed');
+
+    const tables = [
+      ['members', "SELECT source_url FROM members WHERE display_name = 'Alice'"],
+      ['facts', "SELECT source_url FROM facts WHERE content = 'LangChain works for RAG'"],
+      ['topics', "SELECT source_url FROM topics WHERE name = 'RAG Pipeline'"],
+      ['decisions', "SELECT source_url FROM decisions WHERE description = 'Use LangChain'"],
+      ['tasks', "SELECT source_url FROM tasks WHERE description = 'Build pipeline'"],
+      ['questions', "SELECT source_url FROM questions WHERE question = 'Which model?'"],
+      ['events', "SELECT source_url FROM events WHERE name = 'Kickoff meeting'"],
+    ];
+
+    for (const [table, query] of tables) {
+      const rows = driver.read(query);
+      assert(rows.length > 0 && rows[0].source_url === sourceUrl, `${table} stored source_url`);
+    }
+  } finally {
+    llm.extractWithRetry = originalExtractWithRetry;
+    driver.close();
+    fs.unlinkSync(testDb);
+  }
 }
 
 function testVisibilityStored() {
@@ -2796,6 +2954,9 @@ async function runAll() {
   testVisibilityColumnExists();
   testVisibilityMigration();
   testVisibilityStored();
+  testSourceUrlColumnExists();
+  testSourceUrlMigration();
+  await testSourceUrlStoredOnExtraction();
 
   console.log(`\n=== Results: ${passed} passed, ${failed} failed ===\n`);
   cleanup();

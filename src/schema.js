@@ -44,7 +44,8 @@ CREATE TABLE IF NOT EXISTS members (
   last_seen TEXT,
   updated_at TEXT DEFAULT (datetime('now')),
   superseded_by INTEGER,
-  visibility TEXT DEFAULT 'public'
+  visibility TEXT DEFAULT 'public',
+  source_url TEXT
 );
 
 -- Facts: extracted knowledge claims
@@ -61,7 +62,8 @@ CREATE TABLE IF NOT EXISTS facts (
   created_at TEXT DEFAULT (datetime('now')),
   superseded_by INTEGER,
   valid_until TEXT,
-  visibility TEXT DEFAULT 'public'
+  visibility TEXT DEFAULT 'public',
+  source_url TEXT
 );
 
 -- Topics: discussion threads
@@ -75,7 +77,8 @@ CREATE TABLE IF NOT EXISTS topics (
   conversation_id TEXT,
   created_at TEXT DEFAULT (datetime('now')),
   superseded_by INTEGER,
-  visibility TEXT DEFAULT 'public'
+  visibility TEXT DEFAULT 'public',
+  source_url TEXT
 );
 
 -- FTS5 indexes
@@ -156,7 +159,8 @@ CREATE TABLE IF NOT EXISTS decisions (
   created_at TEXT DEFAULT (datetime('now')),
   updated_at TEXT,
   superseded_by INTEGER,
-  visibility TEXT DEFAULT 'public'
+  visibility TEXT DEFAULT 'public',
+  source_url TEXT
 );
 
 -- Tasks: action items and assignments
@@ -174,7 +178,8 @@ CREATE TABLE IF NOT EXISTS tasks (
   created_at TEXT DEFAULT (datetime('now')),
   updated_at TEXT,
   superseded_by INTEGER,
-  visibility TEXT DEFAULT 'public'
+  visibility TEXT DEFAULT 'public',
+  source_url TEXT
 );
 
 -- Questions: asked and answered
@@ -191,7 +196,8 @@ CREATE TABLE IF NOT EXISTS questions (
   created_at TEXT DEFAULT (datetime('now')),
   updated_at TEXT,
   superseded_by INTEGER,
-  visibility TEXT DEFAULT 'public'
+  visibility TEXT DEFAULT 'public',
+  source_url TEXT
 );
 
 -- Events: meetings, deadlines, gatherings
@@ -207,7 +213,8 @@ CREATE TABLE IF NOT EXISTS events (
   conversation_id TEXT,
   created_at TEXT DEFAULT (datetime('now')),
   superseded_by INTEGER,
-  visibility TEXT DEFAULT 'public'
+  visibility TEXT DEFAULT 'public',
+  source_url TEXT
 );
 
 -- FTS5 indexes: decisions, tasks, questions, events
@@ -370,7 +377,7 @@ function init(dbPath, { force = false, profile = 'knowledge' } = {}) {
   const { esc } = require('./driver');
   driver.write(`INSERT OR REPLACE INTO lizardbrain_meta (key, value, updated_at) VALUES ('profile_name', '${esc(profile)}', datetime('now'));`);
   driver.write(`INSERT OR REPLACE INTO lizardbrain_meta (key, value, updated_at) VALUES ('profile_entities', '${esc(profileConfig.entities.join(','))}', datetime('now'));`);
-  driver.write(`INSERT OR REPLACE INTO lizardbrain_meta (key, value, updated_at) VALUES ('schema_version', '1.1', datetime('now'));`);
+  driver.write(`INSERT OR REPLACE INTO lizardbrain_meta (key, value, updated_at) VALUES ('schema_version', '1.2', datetime('now'));`);
 
   driver.close();
 
@@ -401,9 +408,9 @@ function migrate(driver) {
   // Check current schema version
   const meta = driver.read("SELECT value FROM lizardbrain_meta WHERE key = 'schema_version'");
   const version = meta[0]?.value;
-  if (parseFloat(version) >= 1.1) {
+  if (parseFloat(version) >= 1.2) {
     applyIndexes(driver); // Ensure performance indexes exist (idempotent)
-    return { migrated: false, message: 'Already at v1.1' };
+    return { migrated: false, message: 'Already at v1.2' };
   }
 
   // Create new tables (IF NOT EXISTS makes this idempotent)
@@ -598,9 +605,19 @@ function migrate(driver) {
 
   driver.write("INSERT OR REPLACE INTO lizardbrain_meta (key, value, updated_at) VALUES ('schema_version', '1.1', datetime('now'));");
 
+  // v1.2 migration: source_url column on all entity tables
+  const sourceUrlTables = ['facts', 'members', 'topics', 'decisions', 'tasks', 'questions', 'events'];
+  for (const table of sourceUrlTables) {
+    if (!getColumns(driver, table).has('source_url')) {
+      driver.write(`ALTER TABLE ${table} ADD COLUMN source_url TEXT;`);
+    }
+  }
+
+  driver.write("INSERT OR REPLACE INTO lizardbrain_meta (key, value, updated_at) VALUES ('schema_version', '1.2', datetime('now'));");
+
   applyIndexes(driver); // Performance indexes (idempotent)
 
-  return { migrated: true, message: 'Migrated to v1.1 schema' };
+  return { migrated: true, message: 'Migrated to v1.2 schema' };
 }
 
 module.exports = { init, migrate, SCHEMA_SQL };

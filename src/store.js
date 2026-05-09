@@ -58,9 +58,14 @@ function mergeCSV(existing, incoming) {
   return result.join(', ');
 }
 
-function upsertMember(driver, member, messageDate, visibility = 'public') {
+function upsertMember(driver, member, messageDate, visibility = 'public', sourceUrl = null) {
+  const lookupClauses = [`display_name='${esc(member.display_name)}'`];
+  if (member.username) {
+    lookupClauses.push(`username='${esc(member.username)}'`);
+  }
+  const lookupWhere = lookupClauses.join(' OR ');
   const existing = driver.read(
-    `SELECT id, expertise, projects FROM members WHERE display_name='${esc(member.display_name)}' OR username='${esc(member.username)}'`
+    `SELECT id, expertise, projects FROM members WHERE ${lookupWhere}`
   );
 
   if (existing.length > 0) {
@@ -74,32 +79,32 @@ function upsertMember(driver, member, messageDate, visibility = 'public') {
         projects = '${esc(mergedProjects)}',
         last_seen = '${esc(messageDate)}',
         visibility = '${esc(visibility)}',
+        ${sourceUrl ? `source_url = '${esc(sourceUrl)}',` : ''}
         updated_at = datetime('now')
       WHERE id = ${e.id};
     `);
     return e.id;
   } else {
     driver.write(`
-      INSERT INTO members (username, display_name, expertise, projects, first_seen, last_seen, visibility)
+      INSERT INTO members (username, display_name, expertise, projects, first_seen, last_seen, visibility, source_url)
       VALUES (
-        '${esc(member.username || '')}',
+        ${member.username ? `'${esc(member.username)}'` : 'NULL'},
         '${esc(member.display_name)}',
         '${esc(member.expertise || '')}',
         '${esc(member.projects || '')}',
         '${esc(messageDate)}',
         '${esc(messageDate)}',
-        '${esc(visibility)}'
+        '${esc(visibility)}',
+        ${sourceUrl ? `'${esc(sourceUrl)}'` : 'NULL'}
       );
     `);
     // Query back the id (last_insert_rowid doesn't work across separate sqlite3 processes)
-    const inserted = driver.read(
-      `SELECT id FROM members WHERE display_name='${esc(member.display_name)}' OR username='${esc(member.username)}'`
-    );
+    const inserted = driver.read(`SELECT id FROM members WHERE ${lookupWhere}`);
     return inserted[0]?.id;
   }
 }
 
-function insertFact(driver, fact, memberId, messageDate, sourceAgent, conversationId, visibility = 'public') {
+function insertFact(driver, fact, memberId, messageDate, sourceAgent, conversationId, visibility = 'public', sourceUrl = null) {
   // Dedup strategy: extract key terms from content and check FTS for similar existing facts.
   // This catches semantically similar facts even when LLM rephrases them.
   const content = fact.content || '';
@@ -124,7 +129,7 @@ function insertFact(driver, fact, memberId, messageDate, sourceAgent, conversati
   const validUntil = days ? `datetime('${esc(messageDate)}', '+${days} days')` : 'NULL';
 
   driver.write(`
-    INSERT INTO facts (category, content, source_member_id, tags, confidence, message_date, source_agent, conversation_id, valid_until, visibility)
+    INSERT INTO facts (category, content, source_member_id, tags, confidence, message_date, source_agent, conversation_id, valid_until, visibility, source_url)
     VALUES (
       '${esc(fact.category)}',
       '${esc(content)}',
@@ -135,7 +140,8 @@ function insertFact(driver, fact, memberId, messageDate, sourceAgent, conversati
       ${sourceAgent ? `'${esc(sourceAgent)}'` : 'NULL'},
       ${conversationId ? `'${esc(conversationId)}'` : 'NULL'},
       ${validUntil},
-      '${esc(visibility)}'
+      '${esc(visibility)}',
+      ${sourceUrl ? `'${esc(sourceUrl)}'` : 'NULL'}
     );
   `);
   return true;
@@ -163,7 +169,7 @@ function extractKeywords(text) {
     .filter(w => w.length > 2 && !stopwords.has(w));
 }
 
-function insertTopic(driver, topic, messageDate, conversationId, visibility = 'public') {
+function insertTopic(driver, topic, messageDate, conversationId, visibility = 'public', sourceUrl = null) {
   // Dedup: check for existing topic with similar name via FTS (2 keywords)
   const nameKeywords = extractKeywords(topic.name);
   if (nameKeywords.length >= 2) {
@@ -175,7 +181,7 @@ function insertTopic(driver, topic, messageDate, conversationId, visibility = 'p
   }
 
   driver.write(`
-    INSERT INTO topics (name, summary, participants, message_date, tags, conversation_id, visibility)
+    INSERT INTO topics (name, summary, participants, message_date, tags, conversation_id, visibility, source_url)
     VALUES (
       '${esc(topic.name)}',
       '${esc(topic.summary || '')}',
@@ -183,13 +189,14 @@ function insertTopic(driver, topic, messageDate, conversationId, visibility = 'p
       '${esc(messageDate)}',
       '${esc(topic.tags || '')}',
       ${conversationId ? `'${esc(conversationId)}'` : 'NULL'},
-      '${esc(visibility)}'
+      '${esc(visibility)}',
+      ${sourceUrl ? `'${esc(sourceUrl)}'` : 'NULL'}
     );
   `);
   return true;
 }
 
-function insertDecision(driver, decision, messageDate, sourceAgent, conversationId, visibility = 'public') {
+function insertDecision(driver, decision, messageDate, sourceAgent, conversationId, visibility = 'public', sourceUrl = null) {
   const description = decision.description || '';
   const prefix = esc(description.substring(0, 80).toLowerCase());
   const keywords = extractKeywords(description);
@@ -203,7 +210,7 @@ function insertDecision(driver, decision, messageDate, sourceAgent, conversation
   if (duplicate.length > 0) return false;
 
   driver.write(`
-    INSERT INTO decisions (description, participants, context, status, tags, message_date, source_agent, conversation_id, visibility)
+    INSERT INTO decisions (description, participants, context, status, tags, message_date, source_agent, conversation_id, visibility, source_url)
     VALUES (
       '${esc(description)}',
       '${esc(decision.participants || '')}',
@@ -213,13 +220,14 @@ function insertDecision(driver, decision, messageDate, sourceAgent, conversation
       '${esc(messageDate)}',
       ${sourceAgent ? `'${esc(sourceAgent)}'` : 'NULL'},
       ${conversationId ? `'${esc(conversationId)}'` : 'NULL'},
-      '${esc(visibility)}'
+      '${esc(visibility)}',
+      ${sourceUrl ? `'${esc(sourceUrl)}'` : 'NULL'}
     );
   `);
   return true;
 }
 
-function insertTask(driver, task, memberId, messageDate, sourceAgent, conversationId, visibility = 'public') {
+function insertTask(driver, task, memberId, messageDate, sourceAgent, conversationId, visibility = 'public', sourceUrl = null) {
   const description = task.description || '';
   const prefix = esc(description.substring(0, 80).toLowerCase());
   const keywords = extractKeywords(description);
@@ -233,7 +241,7 @@ function insertTask(driver, task, memberId, messageDate, sourceAgent, conversati
   if (duplicate.length > 0) return false;
 
   driver.write(`
-    INSERT INTO tasks (description, assignee, deadline, status, source_member_id, tags, message_date, source_agent, conversation_id, visibility)
+    INSERT INTO tasks (description, assignee, deadline, status, source_member_id, tags, message_date, source_agent, conversation_id, visibility, source_url)
     VALUES (
       '${esc(description)}',
       '${esc(task.assignee || '')}',
@@ -244,13 +252,14 @@ function insertTask(driver, task, memberId, messageDate, sourceAgent, conversati
       '${esc(messageDate)}',
       ${sourceAgent ? `'${esc(sourceAgent)}'` : 'NULL'},
       ${conversationId ? `'${esc(conversationId)}'` : 'NULL'},
-      '${esc(visibility)}'
+      '${esc(visibility)}',
+      ${sourceUrl ? `'${esc(sourceUrl)}'` : 'NULL'}
     );
   `);
   return true;
 }
 
-function insertQuestion(driver, question, messageDate, conversationId, visibility = 'public') {
+function insertQuestion(driver, question, messageDate, conversationId, visibility = 'public', sourceUrl = null) {
   const text = question.question || '';
   const prefix = esc(text.substring(0, 80).toLowerCase());
   const keywords = extractKeywords(text);
@@ -264,7 +273,7 @@ function insertQuestion(driver, question, messageDate, conversationId, visibilit
   if (duplicate.length > 0) return false;
 
   driver.write(`
-    INSERT INTO questions (question, asker, answer, answered_by, status, tags, message_date, conversation_id, visibility)
+    INSERT INTO questions (question, asker, answer, answered_by, status, tags, message_date, conversation_id, visibility, source_url)
     VALUES (
       '${esc(text)}',
       '${esc(question.asker || '')}',
@@ -274,13 +283,14 @@ function insertQuestion(driver, question, messageDate, conversationId, visibilit
       '${esc(question.tags || '')}',
       '${esc(messageDate)}',
       ${conversationId ? `'${esc(conversationId)}'` : 'NULL'},
-      '${esc(visibility)}'
+      '${esc(visibility)}',
+      ${sourceUrl ? `'${esc(sourceUrl)}'` : 'NULL'}
     );
   `);
   return true;
 }
 
-function insertEvent(driver, event, messageDate, conversationId, visibility = 'public') {
+function insertEvent(driver, event, messageDate, conversationId, visibility = 'public', sourceUrl = null) {
   const name = event.name || '';
   const prefix = esc(name.substring(0, 80).toLowerCase());
   const keywords = extractKeywords(name);
@@ -294,7 +304,7 @@ function insertEvent(driver, event, messageDate, conversationId, visibility = 'p
   if (duplicate.length > 0) return false;
 
   driver.write(`
-    INSERT INTO events (name, description, event_date, location, attendees, tags, message_date, conversation_id, visibility)
+    INSERT INTO events (name, description, event_date, location, attendees, tags, message_date, conversation_id, visibility, source_url)
     VALUES (
       '${esc(name)}',
       '${esc(event.description || '')}',
@@ -304,7 +314,8 @@ function insertEvent(driver, event, messageDate, conversationId, visibility = 'p
       '${esc(event.tags || '')}',
       '${esc(messageDate)}',
       ${conversationId ? `'${esc(conversationId)}'` : 'NULL'},
-      '${esc(visibility)}'
+      '${esc(visibility)}',
+      ${sourceUrl ? `'${esc(sourceUrl)}'` : 'NULL'}
     );
   `);
   return true;
@@ -540,9 +551,10 @@ function formatContext(context, tokenBudget = 1000) {
   return text;
 }
 
-function processExtraction(driver, extracted, messageDate, { sourceAgent = null, conversationId = null, visibility = 'public' } = {}) {
+function processExtraction(driver, extracted, messageDate, { sourceAgent = null, conversationId = null, visibility = 'public', sourceUrl = null, source_url = null } = {}) {
   let totalFacts = 0, totalTopics = 0, totalMembers = 0;
   let totalDecisions = 0, totalTasks = 0, totalQuestions = 0, totalEvents = 0;
+  const effectiveSourceUrl = sourceUrl ?? source_url ?? null;
   const memberIdMap = {};
   const insertedIds = { facts: [], topics: [], decisions: [], tasks: [], questions: [], events: [] };
 
@@ -550,7 +562,7 @@ function processExtraction(driver, extracted, messageDate, { sourceAgent = null,
     for (const member of extracted.members) {
       if (!member.display_name) continue;
       if (isGenericMember(member.display_name)) continue;
-      const id = upsertMember(driver, member, messageDate, visibility);
+      const id = upsertMember(driver, member, messageDate, visibility, effectiveSourceUrl);
       memberIdMap[member.display_name.toLowerCase()] = id;
       totalMembers++;
     }
@@ -562,7 +574,7 @@ function processExtraction(driver, extracted, messageDate, { sourceAgent = null,
       const memberId = fact.source_member
         ? memberIdMap[fact.source_member.toLowerCase()] || null
         : null;
-      if (insertFact(driver, fact, memberId, messageDate, sourceAgent, conversationId, visibility)) {
+      if (insertFact(driver, fact, memberId, messageDate, sourceAgent, conversationId, visibility, effectiveSourceUrl)) {
         totalFacts++;
         const lastFact = driver.read('SELECT id FROM facts ORDER BY id DESC LIMIT 1');
         if (lastFact.length > 0) insertedIds.facts.push(lastFact[0].id);
@@ -573,7 +585,7 @@ function processExtraction(driver, extracted, messageDate, { sourceAgent = null,
   if (extracted.topics && Array.isArray(extracted.topics)) {
     for (const topic of extracted.topics) {
       if (!topic.name) continue;
-      if (insertTopic(driver, topic, messageDate, conversationId, visibility)) {
+      if (insertTopic(driver, topic, messageDate, conversationId, visibility, effectiveSourceUrl)) {
         totalTopics++;
         const lastTopic = driver.read('SELECT id FROM topics ORDER BY id DESC LIMIT 1');
         if (lastTopic.length > 0) insertedIds.topics.push(lastTopic[0].id);
@@ -584,7 +596,7 @@ function processExtraction(driver, extracted, messageDate, { sourceAgent = null,
   if (extracted.decisions && Array.isArray(extracted.decisions)) {
     for (const decision of extracted.decisions) {
       if (!decision.description) continue;
-      if (insertDecision(driver, decision, messageDate, sourceAgent, conversationId, visibility)) {
+      if (insertDecision(driver, decision, messageDate, sourceAgent, conversationId, visibility, effectiveSourceUrl)) {
         totalDecisions++;
         const lastDecision = driver.read('SELECT id FROM decisions ORDER BY id DESC LIMIT 1');
         if (lastDecision.length > 0) insertedIds.decisions.push(lastDecision[0].id);
@@ -598,7 +610,7 @@ function processExtraction(driver, extracted, messageDate, { sourceAgent = null,
       const memberId = task.source_member
         ? memberIdMap[task.source_member.toLowerCase()] || null
         : null;
-      if (insertTask(driver, task, memberId, messageDate, sourceAgent, conversationId, visibility)) {
+      if (insertTask(driver, task, memberId, messageDate, sourceAgent, conversationId, visibility, effectiveSourceUrl)) {
         totalTasks++;
         const lastTask = driver.read('SELECT id FROM tasks ORDER BY id DESC LIMIT 1');
         if (lastTask.length > 0) insertedIds.tasks.push(lastTask[0].id);
@@ -609,7 +621,7 @@ function processExtraction(driver, extracted, messageDate, { sourceAgent = null,
   if (extracted.questions && Array.isArray(extracted.questions)) {
     for (const question of extracted.questions) {
       if (!question.question) continue;
-      if (insertQuestion(driver, question, messageDate, conversationId, visibility)) {
+      if (insertQuestion(driver, question, messageDate, conversationId, visibility, effectiveSourceUrl)) {
         totalQuestions++;
         const lastQuestion = driver.read('SELECT id FROM questions ORDER BY id DESC LIMIT 1');
         if (lastQuestion.length > 0) insertedIds.questions.push(lastQuestion[0].id);
@@ -620,7 +632,7 @@ function processExtraction(driver, extracted, messageDate, { sourceAgent = null,
   if (extracted.events && Array.isArray(extracted.events)) {
     for (const event of extracted.events) {
       if (!event.name) continue;
-      if (insertEvent(driver, event, messageDate, conversationId, visibility)) {
+      if (insertEvent(driver, event, messageDate, conversationId, visibility, effectiveSourceUrl)) {
         totalEvents++;
         const lastEvent = driver.read('SELECT id FROM events ORDER BY id DESC LIMIT 1');
         if (lastEvent.length > 0) insertedIds.events.push(lastEvent[0].id);
