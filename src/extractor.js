@@ -58,6 +58,7 @@ async function run(adapter, driver, config, options = {}) {
   // Fetch new messages
   const messages = adapter.getMessages(lastId);
   log(`New messages: ${messages.length}`);
+  const sourceUrl = config.sourceUrl || config.source_url || config.source?.url || null;
 
   if (messages.length < minMessages) {
     log(`Below threshold (${minMessages}). Skipping.`);
@@ -175,7 +176,12 @@ async function run(adapter, driver, config, options = {}) {
       const messageDate = primaryMsgs[0].timestamp?.split('T')[0] || new Date().toISOString().split('T')[0];
       const conversationId = batch[0]?.conversationId || null;
 
-      const result = store.processExtraction(driver, extracted, messageDate, { sourceAgent: config.sourceAgent || null, conversationId, visibility: config.visibility || 'public' });
+      const result = store.processExtraction(driver, extracted, messageDate, {
+        sourceAgent: config.sourceAgent || null,
+        conversationId,
+        visibility: config.visibility || 'public',
+        sourceUrl,
+      });
 
       // Semantic dedup: if enabled, check new facts against existing embeddings
       if (config.dedup?.semantic && driver.capabilities.vectors && config.embedding?.enabled && result.insertedFactIds?.length > 0) {

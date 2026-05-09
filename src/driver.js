@@ -211,7 +211,12 @@ function createDriver(dbPath, options = {}) {
     return new CliDriver(dbPath);
   }
 
-  return new BetterSqliteDriver(dbPath);
+  try {
+    return new BetterSqliteDriver(dbPath);
+  } catch (err) {
+    console.warn(`[lizardbrain] better-sqlite3 unavailable (${err.message}); falling back to sqlite3 CLI.`);
+    return new CliDriver(dbPath);
+  }
 }
 
 // --- Utility ---
