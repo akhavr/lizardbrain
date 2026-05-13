@@ -118,7 +118,7 @@ function ftsSearch(driver, query, limit, conversationId, opts = {}) {
 
   // Search facts_fts
   const facts = driver.read(
-    `SELECT f.id, f.content, f.confidence, f.tags, f.category, m.display_name as member, bm25(facts_fts) AS bm25
+    `SELECT f.id, f.content, f.confidence, f.tags, f.category, f.source_url, m.display_name as member, bm25(facts_fts) AS bm25
      FROM facts f
      LEFT JOIN members m ON f.source_member_id = m.id
      JOIN facts_fts ON facts_fts.rowid = f.id
@@ -139,6 +139,7 @@ function ftsSearch(driver, query, limit, conversationId, opts = {}) {
         member: f.member || null,
         tags: f.tags || '',
         category: f.category,
+        source_url: f.source_url || null,
       },
     });
   }
@@ -146,7 +147,7 @@ function ftsSearch(driver, query, limit, conversationId, opts = {}) {
   // Search topics_fts
   const topicConvFilter = conversationId ? ` AND conversation_id = '${esc(conversationId)}'` : '';
   const topics = driver.read(
-    `SELECT id, name, summary, tags, participants
+    `SELECT id, name, summary, tags, participants, source_url
      FROM topics
      WHERE id IN (SELECT rowid FROM topics_fts WHERE topics_fts MATCH '${escapedQuery}') AND superseded_by IS NULL${topicConvFilter}
      ORDER BY created_at DESC
@@ -163,13 +164,14 @@ function ftsSearch(driver, query, limit, conversationId, opts = {}) {
         text: t.summary || t.name,
         tags: t.tags || '',
         participants: t.participants || '',
+        source_url: t.source_url || null,
       },
     });
   }
 
   // Search members_fts
   const members = driver.read(
-    `SELECT id, display_name, username, expertise, projects
+    `SELECT id, display_name, username, expertise, projects, source_url
      FROM members
      WHERE id IN (SELECT rowid FROM members_fts WHERE members_fts MATCH '${escapedQuery}') AND superseded_by IS NULL
      LIMIT ${limit}`
@@ -185,6 +187,7 @@ function ftsSearch(driver, query, limit, conversationId, opts = {}) {
         text: m.display_name || m.username,
         expertise: m.expertise || '',
         projects: m.projects || '',
+        source_url: m.source_url || null,
       },
     });
   }
@@ -192,7 +195,7 @@ function ftsSearch(driver, query, limit, conversationId, opts = {}) {
   // Search decisions_fts
   const decConvFilter = conversationId ? ` AND conversation_id = '${esc(conversationId)}'` : '';
   const decisions = driver.read(
-    `SELECT id, description, context, participants, status, tags
+    `SELECT id, description, context, participants, status, tags, source_url
      FROM decisions
      WHERE id IN (SELECT rowid FROM decisions_fts WHERE decisions_fts MATCH '${escapedQuery}') AND superseded_by IS NULL${decConvFilter}
      ORDER BY created_at DESC
@@ -211,6 +214,7 @@ function ftsSearch(driver, query, limit, conversationId, opts = {}) {
         participants: d.participants || '',
         status: d.status || 'proposed',
         tags: d.tags || '',
+        source_url: d.source_url || null,
       },
     });
   }
@@ -218,7 +222,7 @@ function ftsSearch(driver, query, limit, conversationId, opts = {}) {
   // Search tasks_fts
   const taskConvFilter = conversationId ? ` AND t.conversation_id = '${esc(conversationId)}'` : '';
   const tasks = driver.read(
-    `SELECT t.id, t.description, t.assignee, t.status, t.tags, m.display_name as member
+    `SELECT t.id, t.description, t.assignee, t.status, t.tags, t.source_url, m.display_name as member
      FROM tasks t
      LEFT JOIN members m ON t.source_member_id = m.id
      WHERE t.id IN (SELECT rowid FROM tasks_fts WHERE tasks_fts MATCH '${escapedQuery}') AND t.superseded_by IS NULL${taskConvFilter}
@@ -238,6 +242,7 @@ function ftsSearch(driver, query, limit, conversationId, opts = {}) {
         member: t.member || null,
         status: t.status || 'open',
         tags: t.tags || '',
+        source_url: t.source_url || null,
       },
     });
   }
@@ -245,7 +250,7 @@ function ftsSearch(driver, query, limit, conversationId, opts = {}) {
   // Search questions_fts
   const qConvFilter = conversationId ? ` AND conversation_id = '${esc(conversationId)}'` : '';
   const questions = driver.read(
-    `SELECT id, question, asker, answer, answered_by, status, tags
+    `SELECT id, question, asker, answer, answered_by, status, tags, source_url
      FROM questions
      WHERE id IN (SELECT rowid FROM questions_fts WHERE questions_fts MATCH '${escapedQuery}') AND superseded_by IS NULL${qConvFilter}
      ORDER BY created_at DESC
@@ -265,6 +270,7 @@ function ftsSearch(driver, query, limit, conversationId, opts = {}) {
         answered_by: q.answered_by || '',
         status: q.status || 'open',
         tags: q.tags || '',
+        source_url: q.source_url || null,
       },
     });
   }
@@ -272,7 +278,7 @@ function ftsSearch(driver, query, limit, conversationId, opts = {}) {
   // Search events_fts
   const evtConvFilter = conversationId ? ` AND conversation_id = '${esc(conversationId)}'` : '';
   const events = driver.read(
-    `SELECT id, name, description, event_date, location, attendees, tags
+    `SELECT id, name, description, event_date, location, attendees, tags, source_url
      FROM events
      WHERE id IN (SELECT rowid FROM events_fts WHERE events_fts MATCH '${escapedQuery}') AND superseded_by IS NULL${evtConvFilter}
      ORDER BY created_at DESC
@@ -292,6 +298,7 @@ function ftsSearch(driver, query, limit, conversationId, opts = {}) {
         location: e.location || '',
         attendees: e.attendees || '',
         tags: e.tags || '',
+        source_url: e.source_url || null,
       },
     });
   }
@@ -349,7 +356,7 @@ function vecSearch(driver, queryEmbedding, limit, modelId, conversationId) {
       if (count >= limit) break;
       if (modelFilter && !modelFilter.has(row.fact_id)) continue;
       const fact = db.prepare(
-        `SELECT f.id, f.content, f.confidence, f.tags, f.category, f.conversation_id, m.display_name as member
+        `SELECT f.id, f.content, f.confidence, f.tags, f.category, f.conversation_id, f.source_url, m.display_name as member
          FROM facts f
          LEFT JOIN members m ON f.source_member_id = m.id
          WHERE f.id = ? AND f.superseded_by IS NULL AND (f.valid_until IS NULL OR f.valid_until >= datetime('now'))`
@@ -365,6 +372,7 @@ function vecSearch(driver, queryEmbedding, limit, modelId, conversationId) {
             member: fact.member || null,
             tags: fact.tags || '',
             category: fact.category,
+            source_url: fact.source_url || null,
           },
         });
         count++;
@@ -387,7 +395,7 @@ function vecSearch(driver, queryEmbedding, limit, modelId, conversationId) {
       if (count >= limit) break;
       if (modelFilter && !modelFilter.has(row.topic_id)) continue;
       const topic = db.prepare(
-        `SELECT id, name, summary, tags, participants, conversation_id FROM topics WHERE id = ? AND superseded_by IS NULL`
+        `SELECT id, name, summary, tags, participants, conversation_id, source_url FROM topics WHERE id = ? AND superseded_by IS NULL`
       ).get(row.topic_id);
       if (topic && (!conversationId || topic.conversation_id === conversationId)) {
         results.push({
@@ -398,6 +406,7 @@ function vecSearch(driver, queryEmbedding, limit, modelId, conversationId) {
             text: topic.summary || topic.name,
             tags: topic.tags || '',
             participants: topic.participants || '',
+            source_url: topic.source_url || null,
           },
         });
         count++;
@@ -420,7 +429,7 @@ function vecSearch(driver, queryEmbedding, limit, modelId, conversationId) {
       if (count >= limit) break;
       if (modelFilter && !modelFilter.has(row.member_id)) continue;
       const member = db.prepare(
-        `SELECT id, display_name, username, expertise, projects FROM members WHERE id = ? AND superseded_by IS NULL`
+        `SELECT id, display_name, username, expertise, projects, source_url FROM members WHERE id = ? AND superseded_by IS NULL`
       ).get(row.member_id);
       if (member) {
         results.push({
@@ -431,6 +440,7 @@ function vecSearch(driver, queryEmbedding, limit, modelId, conversationId) {
             text: member.display_name || member.username,
             expertise: member.expertise || '',
             projects: member.projects || '',
+            source_url: member.source_url || null,
           },
         });
         count++;
@@ -453,7 +463,7 @@ function vecSearch(driver, queryEmbedding, limit, modelId, conversationId) {
       if (count >= limit) break;
       if (modelFilter && !modelFilter.has(row.decision_id)) continue;
       const decision = db.prepare(
-        `SELECT id, description, context, participants, status, tags, conversation_id FROM decisions WHERE id = ? AND superseded_by IS NULL`
+        `SELECT id, description, context, participants, status, tags, conversation_id, source_url FROM decisions WHERE id = ? AND superseded_by IS NULL`
       ).get(row.decision_id);
       if (decision && (!conversationId || decision.conversation_id === conversationId)) {
         results.push({
@@ -466,6 +476,7 @@ function vecSearch(driver, queryEmbedding, limit, modelId, conversationId) {
             participants: decision.participants || '',
             status: decision.status || 'proposed',
             tags: decision.tags || '',
+            source_url: decision.source_url || null,
           },
         });
         count++;
@@ -488,7 +499,7 @@ function vecSearch(driver, queryEmbedding, limit, modelId, conversationId) {
       if (count >= limit) break;
       if (modelFilter && !modelFilter.has(row.task_id)) continue;
       const task = db.prepare(
-        `SELECT t.id, t.description, t.assignee, t.status, t.tags, t.conversation_id, m.display_name as member
+        `SELECT t.id, t.description, t.assignee, t.status, t.tags, t.conversation_id, t.source_url, m.display_name as member
          FROM tasks t LEFT JOIN members m ON t.source_member_id = m.id WHERE t.id = ? AND t.superseded_by IS NULL`
       ).get(row.task_id);
       if (task && (!conversationId || task.conversation_id === conversationId)) {
@@ -502,6 +513,7 @@ function vecSearch(driver, queryEmbedding, limit, modelId, conversationId) {
             member: task.member || null,
             status: task.status || 'open',
             tags: task.tags || '',
+            source_url: task.source_url || null,
           },
         });
         count++;
@@ -524,7 +536,7 @@ function vecSearch(driver, queryEmbedding, limit, modelId, conversationId) {
       if (count >= limit) break;
       if (modelFilter && !modelFilter.has(row.question_id)) continue;
       const question = db.prepare(
-        `SELECT id, question, asker, answer, answered_by, status, tags, conversation_id FROM questions WHERE id = ? AND superseded_by IS NULL`
+        `SELECT id, question, asker, answer, answered_by, status, tags, conversation_id, source_url FROM questions WHERE id = ? AND superseded_by IS NULL`
       ).get(row.question_id);
       if (question && (!conversationId || question.conversation_id === conversationId)) {
         results.push({
@@ -538,6 +550,7 @@ function vecSearch(driver, queryEmbedding, limit, modelId, conversationId) {
             answered_by: question.answered_by || '',
             status: question.status || 'open',
             tags: question.tags || '',
+            source_url: question.source_url || null,
           },
         });
         count++;
@@ -560,7 +573,7 @@ function vecSearch(driver, queryEmbedding, limit, modelId, conversationId) {
       if (count >= limit) break;
       if (modelFilter && !modelFilter.has(row.event_id)) continue;
       const event = db.prepare(
-        `SELECT id, name, description, event_date, location, attendees, tags, conversation_id FROM events WHERE id = ? AND superseded_by IS NULL`
+        `SELECT id, name, description, event_date, location, attendees, tags, conversation_id, source_url FROM events WHERE id = ? AND superseded_by IS NULL`
       ).get(row.event_id);
       if (event && (!conversationId || event.conversation_id === conversationId)) {
         results.push({
@@ -574,6 +587,7 @@ function vecSearch(driver, queryEmbedding, limit, modelId, conversationId) {
             location: event.location || '',
             attendees: event.attendees || '',
             tags: event.tags || '',
+            source_url: event.source_url || null,
           },
         });
         count++;
@@ -625,6 +639,7 @@ async function search(driver, query, options = {}) {
         if (d.confidence !== undefined) out.confidence = d.confidence;
         if (d.member !== undefined) out.member = d.member;
         if (d.tags !== undefined) out.tags = d.tags;
+        if (d.source_url) out.source_url = d.source_url;
         return out;
       });
 
@@ -646,6 +661,7 @@ async function search(driver, query, options = {}) {
     if (d.confidence !== undefined) out.confidence = d.confidence;
     if (d.member !== undefined) out.member = d.member;
     if (d.tags !== undefined) out.tags = d.tags;
+    if (d.source_url) out.source_url = d.source_url;
     return out;
   });
 

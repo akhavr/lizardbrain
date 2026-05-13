@@ -34,6 +34,7 @@ function create(config) {
   const senderCol = columns.sender || null;
   const timestampCol = columns.timestamp || null;
   const conversationCol = columns.conversation || conversationFilter?.column || null;
+  const sourceUrlCol = columns.sourceUrl || columns.source_url || null;
 
   // Lazily-created driver for this source DB
   let _driver = null;
@@ -107,6 +108,7 @@ function create(config) {
       if (senderCol) selectCols.push(senderCol);
       if (timestampCol) selectCols.push(timestampCol);
       if (conversationCol) selectCols.push(conversationCol);
+      if (sourceUrlCol) selectCols.push(sourceUrlCol);
 
       const query = `SELECT ${selectCols.join(', ')} FROM ${table} WHERE ${where} ORDER BY ${idCol} ASC`;
       const rows = getDriver().read(query);
@@ -120,6 +122,7 @@ function create(config) {
             sender: parsed.sender || (senderCol ? row[senderCol] : 'unknown'),
             timestamp: parsed.timestamp || (timestampCol ? row[timestampCol] : ''),
             conversationId: conversationCol ? (row[conversationCol] || null) : null,
+            source_url: sourceUrlCol ? (row[sourceUrlCol] || null) : null,
           };
         }
 
@@ -129,6 +132,7 @@ function create(config) {
           sender: senderCol ? (row[senderCol] || 'unknown') : 'unknown',
           timestamp: timestampCol ? (row[timestampCol] || '') : '',
           conversationId: conversationCol ? (row[conversationCol] || null) : null,
+          source_url: sourceUrlCol ? (row[sourceUrlCol] || null) : null,
         };
       }).filter(m => m.content && m.content.length > 0);
     },

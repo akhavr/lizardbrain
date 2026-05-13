@@ -175,12 +175,14 @@ async function run(adapter, driver, config, options = {}) {
       }
       const messageDate = primaryMsgs[0].timestamp?.split('T')[0] || new Date().toISOString().split('T')[0];
       const conversationId = batch[0]?.conversationId || null;
+      // Prefer source_url from first message that has one, fall back to config
+      const batchSourceUrl = batch.find(m => m.source_url)?.source_url || sourceUrl;
 
       const result = store.processExtraction(driver, extracted, messageDate, {
         sourceAgent: config.sourceAgent || null,
         conversationId,
         visibility: config.visibility || 'public',
-        sourceUrl,
+        sourceUrl: batchSourceUrl,
       });
 
       // Semantic dedup: if enabled, check new facts against existing embeddings
