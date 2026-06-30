@@ -83,6 +83,7 @@ function testInit() {
   assert(tables.includes('tasks'), 'tasks table exists');
   assert(tables.includes('questions'), 'questions table exists');
   assert(tables.includes('events'), 'events table exists');
+  assert(tables.includes('messages'), 'messages table exists');
   assert(tables.includes('facts_fts'), 'FTS tables exist');
   assert(tables.includes('decisions_fts'), 'decisions_fts table exists');
   assert(tables.includes('tasks_fts'), 'tasks_fts table exists');
@@ -827,6 +828,7 @@ function testMigration() {
   assert(tables.includes('tasks'), 'tasks table created by migration');
   assert(tables.includes('questions'), 'questions table created by migration');
   assert(tables.includes('events'), 'events table created by migration');
+  assert(tables.includes('messages'), 'messages table created by migration');
   assert(tables.includes('decisions_fts'), 'decisions_fts created by migration');
 
   // Verify profile defaulted to knowledge
@@ -835,7 +837,7 @@ function testMigration() {
 
   // Verify schema version set
   const version = driver.read("SELECT value FROM lizardbrain_meta WHERE key = 'schema_version'");
-  assert(version[0]?.value === '1.2', 'Schema version set to 1.2');
+  assert(version[0]?.value === '1.3', 'Schema version set to 1.3');
 
   // Idempotent: running again should be a no-op
   const result2 = migrate(driver);
@@ -871,7 +873,7 @@ function testMigrationPreMeta() {
 
   // Verify lizardbrain_meta was created and populated
   const version = driver.read("SELECT value FROM lizardbrain_meta WHERE key = 'schema_version'");
-  assert(version[0]?.value === '1.2', 'Schema version set to 1.2 on pre-meta DB');
+  assert(version[0]?.value === '1.3', 'Schema version set to 1.3 on pre-meta DB');
 
   const profile = driver.read("SELECT value FROM lizardbrain_meta WHERE key = 'profile_name'");
   assert(profile[0]?.value === 'knowledge', 'Default profile set on pre-meta DB');
@@ -1272,7 +1274,7 @@ function testMigrationV05() {
 
   // Verify schema version
   const version = driver.read("SELECT value FROM lizardbrain_meta WHERE key = 'schema_version'");
-  assert(version[0]?.value === '1.2', 'Schema version updated to 1.2');
+  assert(version[0]?.value === '1.3', 'Schema version updated to 1.3');
 
   // Idempotent
   const result2 = migrate(driver);
@@ -1310,7 +1312,7 @@ function testMigrationV08() {
 
   // Verify schema version is 1.0
   const version = driver.read("SELECT value FROM lizardbrain_meta WHERE key = 'schema_version'");
-  assert(version[0]?.value === '1.2', 'Schema version set to 1.2');
+  assert(version[0]?.value === '1.3', 'Schema version set to 1.3');
 
   // Idempotent
   const result2 = migrate(driver);
@@ -1338,7 +1340,7 @@ function testMigrationV09() {
   assert(hasValidUntil, 'facts has valid_until column');
 
   const version = driver.read("SELECT value FROM lizardbrain_meta WHERE key = 'schema_version'");
-  assert(version[0]?.value === '1.2', 'Schema version set to 1.2');
+  assert(version[0]?.value === '1.3', 'Schema version set to 1.3');
 
   const result2 = migrate(driver);
   assert(result2.migrated === false, 'Second v0.9 migration is no-op');
@@ -1371,7 +1373,7 @@ function testMigrationV10() {
   assert(colNames.includes('relation'), 'entity_links has relation');
 
   const version2 = driver.read("SELECT value FROM lizardbrain_meta WHERE key = 'schema_version'");
-  assert(version2[0]?.value === '1.2', 'Schema version set to 1.2');
+  assert(version2[0]?.value === '1.3', 'Schema version set to 1.3');
 
   const result2 = migrate(driver);
   assert(result2.migrated === false, 'Second v1.0 migration is no-op');
@@ -2688,7 +2690,7 @@ function testVisibilityMigration() {
   const result = migrate(driver);
 
   assert(result.migrated === true, 'Migration ran');
-  assert(result.message.includes('1.2'), 'Migrated to v1.2');
+  assert(result.message.includes('1.3'), 'Migrated to v1.3');
 
   // Check all tables have visibility column
   const tables = ['facts', 'members', 'topics', 'decisions', 'tasks', 'questions', 'events'];
@@ -2744,7 +2746,7 @@ function testSourceUrlMigration() {
   const result = migrate(driver);
 
   assert(result.migrated === true, 'Migration ran');
-  assert(result.message.includes('1.2'), 'Migrated to v1.2');
+  assert(result.message.includes('1.3'), 'Migrated to v1.3');
 
   const tables = ['facts', 'members', 'topics', 'decisions', 'tasks', 'questions', 'events'];
   for (const table of tables) {
@@ -2883,6 +2885,59 @@ function testVisibilityStored() {
   fs.unlinkSync(testDb);
 }
 
+function testMessagesTable() {
+  console.log('\n--- Test: messages table (verbatim storage) ---');
+
+  // Column presence in a freshly initialized DB
+  const testDb = path.join(TEST_DIR, 'messages_test.db');
+  if (fs.existsSync(testDb)) fs.unlinkSync(testDb);
+  lizardbrain.init(testDb, { profile: 'full' });
+
+  const columns = execSync(`sqlite3 "${testDb}" "PRAGMA table_info(messages)"`, { encoding: 'utf-8' });
+  for (const col of [
+    'conversation_id', 'message_id', 'thread_id', 'source_id', 'source_type',
+    'sender', 'text', 'message_date', 'reply_to_msg_id', 'visibility',
+    'media_ref', 'legal_hold', 'created_at',
+  ]) {
+    assert(columns.includes(col), `messages table has ${col} column`);
+  }
+
+  // Range-scan indexes exist
+  const indexes = execSync(`sqlite3 "${testDb}" "SELECT name FROM sqlite_master WHERE type='index' AND tbl_name='messages'"`, { encoding: 'utf-8' });
+  assert(indexes.includes('idx_messages_conversation_date'), 'conversation/date index exists');
+  assert(indexes.includes('idx_messages_date'), 'message_date index exists');
+
+  // INSERT OR IGNORE dedup on (conversation_id, message_id)
+  const driver = createDriver(testDb);
+  driver.write(`INSERT OR IGNORE INTO messages (conversation_id, message_id, text) VALUES ('-100123', '5', 'hello');`);
+  driver.write(`INSERT OR IGNORE INTO messages (conversation_id, message_id, text) VALUES ('-100123', '5', 'hello again');`);
+  const rows = driver.read("SELECT text FROM messages WHERE conversation_id = '-100123' AND message_id = '5'");
+  assert(rows.length === 1, 'INSERT OR IGNORE dedups on (conversation_id, message_id)');
+  assert(rows[0].text === 'hello', 'first insert wins (duplicate ignored)');
+  driver.close();
+
+  // Migration path: a v1.2 DB gains the messages table
+  const migrateDb = path.join(TEST_DIR, 'messages_migrate.db');
+  if (fs.existsSync(migrateDb)) fs.unlinkSync(migrateDb);
+  execSync(`sqlite3 "${migrateDb}"`, {
+    input: `
+      CREATE TABLE facts (id INTEGER PRIMARY KEY, content TEXT, source_url TEXT);
+      CREATE TABLE lizardbrain_meta (key TEXT PRIMARY KEY, value TEXT, updated_at TEXT);
+      INSERT INTO lizardbrain_meta (key, value) VALUES ('schema_version', '1.2');
+    `,
+    stdio: ['pipe', 'pipe', 'pipe'],
+  });
+  const mdriver = createDriver(migrateDb);
+  const mresult = migrate(mdriver);
+  assert(mresult.migrated === true, 'v1.2 -> v1.3 migration ran');
+  const mtables = execSync(`sqlite3 "${migrateDb}" ".tables"`, { encoding: 'utf-8' });
+  assert(mtables.includes('messages'), 'messages table created by v1.3 migration');
+  mdriver.close();
+
+  fs.unlinkSync(testDb);
+  fs.unlinkSync(migrateDb);
+}
+
 // --- Run ---
 
 async function runAll() {
@@ -2957,6 +3012,7 @@ async function runAll() {
   testSourceUrlColumnExists();
   testSourceUrlMigration();
   await testSourceUrlStoredOnExtraction();
+  testMessagesTable();
 
   console.log(`\n=== Results: ${passed} passed, ${failed} failed ===\n`);
   cleanup();

@@ -18,7 +18,7 @@ src/
   cli.js          — CLI (init, extract, embed, stats, search, who, roster)
   config.js       — Config loader (JSON file + env vars + defaults)
   driver.js       — DB driver abstraction (BetterSqliteDriver / CliDriver)
-  schema.js       — SQLite schema (7 entity tables + FTS5 + vec0, migration)
+  schema.js       — SQLite schema (7 entity tables + messages + FTS5 + vec0, migration)
   store.js        — Read/write knowledge, deduplication, query helpers
   profiles.js     — Profile definitions, entity metadata, prompt fragments
   llm.js          — OpenAI-compatible LLM client, dynamic prompt assembly

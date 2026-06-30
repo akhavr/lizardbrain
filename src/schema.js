@@ -29,6 +29,33 @@ function applyIndexes(driver) {
   }
 }
 
+// Verbatim message storage (per-project). Durable copy of every ingested message,
+// retrievable by datetime range. Defined once and reused by SCHEMA_SQL and migrate().
+// NOTE: the JaneAI Python capture path (janeai/messages_store.py) mirrors this DDL
+// so it can persist messages before extraction even on un-migrated databases. Keep
+// the two definitions in sync.
+const MESSAGES_SCHEMA_SQL = `
+CREATE TABLE IF NOT EXISTS messages (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  conversation_id TEXT,
+  message_id TEXT,
+  thread_id TEXT,
+  source_id TEXT,
+  source_type TEXT,
+  sender TEXT,
+  text TEXT,
+  message_date TEXT,
+  reply_to_msg_id TEXT,
+  visibility TEXT DEFAULT 'public',
+  media_ref TEXT,
+  legal_hold TEXT,
+  created_at TEXT DEFAULT (datetime('now')),
+  UNIQUE(conversation_id, message_id)
+);
+CREATE INDEX IF NOT EXISTS idx_messages_conversation_date ON messages(conversation_id, message_date);
+CREATE INDEX IF NOT EXISTS idx_messages_date ON messages(message_date);
+`;
+
 const SCHEMA_SQL = `
 PRAGMA journal_mode=WAL;
 
@@ -353,6 +380,9 @@ CREATE TABLE IF NOT EXISTS entity_links (
 CREATE INDEX IF NOT EXISTS idx_links_from ON entity_links(from_type, from_id);
 CREATE INDEX IF NOT EXISTS idx_links_to ON entity_links(to_type, to_id);
 
+-- Verbatim message storage
+${MESSAGES_SCHEMA_SQL}
+
 -- Performance indexes
 ${PERFORMANCE_INDEXES.map(s => s + ';').join('\n')}
 `;
@@ -377,7 +407,7 @@ function init(dbPath, { force = false, profile = 'knowledge' } = {}) {
   const { esc } = require('./driver');
   driver.write(`INSERT OR REPLACE INTO lizardbrain_meta (key, value, updated_at) VALUES ('profile_name', '${esc(profile)}', datetime('now'));`);
   driver.write(`INSERT OR REPLACE INTO lizardbrain_meta (key, value, updated_at) VALUES ('profile_entities', '${esc(profileConfig.entities.join(','))}', datetime('now'));`);
-  driver.write(`INSERT OR REPLACE INTO lizardbrain_meta (key, value, updated_at) VALUES ('schema_version', '1.2', datetime('now'));`);
+  driver.write(`INSERT OR REPLACE INTO lizardbrain_meta (key, value, updated_at) VALUES ('schema_version', '1.3', datetime('now'));`);
 
   driver.close();
 
@@ -408,9 +438,9 @@ function migrate(driver) {
   // Check current schema version
   const meta = driver.read("SELECT value FROM lizardbrain_meta WHERE key = 'schema_version'");
   const version = meta[0]?.value;
-  if (parseFloat(version) >= 1.2) {
+  if (parseFloat(version) >= 1.3) {
     applyIndexes(driver); // Ensure performance indexes exist (idempotent)
-    return { migrated: false, message: 'Already at v1.2' };
+    return { migrated: false, message: 'Already at v1.3' };
   }
 
   // Create new tables (IF NOT EXISTS makes this idempotent)
@@ -615,9 +645,14 @@ function migrate(driver) {
 
   driver.write("INSERT OR REPLACE INTO lizardbrain_meta (key, value, updated_at) VALUES ('schema_version', '1.2', datetime('now'));");
 
+  // v1.3 migration: verbatim message storage table (durable copy of ingested messages)
+  driver.write(MESSAGES_SCHEMA_SQL);
+
+  driver.write("INSERT OR REPLACE INTO lizardbrain_meta (key, value, updated_at) VALUES ('schema_version', '1.3', datetime('now'));");
+
   applyIndexes(driver); // Performance indexes (idempotent)
 
-  return { migrated: true, message: 'Migrated to v1.2 schema' };
+  return { migrated: true, message: 'Migrated to v1.3 schema' };
 }
 
 module.exports = { init, migrate, SCHEMA_SQL };
