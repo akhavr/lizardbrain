@@ -21,6 +21,7 @@ const PERFORMANCE_INDEXES = [
   'CREATE INDEX IF NOT EXISTS idx_questions_conversation ON questions(conversation_id)',
   'CREATE INDEX IF NOT EXISTS idx_events_conversation ON events(conversation_id)',
   'CREATE INDEX IF NOT EXISTS idx_topics_conversation ON topics(conversation_id)',
+  'CREATE INDEX IF NOT EXISTS idx_messages_source_date ON messages(source_id, message_date)',
 ];
 
 function applyIndexes(driver) {
@@ -53,6 +54,7 @@ CREATE TABLE IF NOT EXISTS messages (
   UNIQUE(conversation_id, message_id)
 );
 CREATE INDEX IF NOT EXISTS idx_messages_conversation_date ON messages(conversation_id, message_date);
+CREATE INDEX IF NOT EXISTS idx_messages_source_date ON messages(source_id, message_date);
 CREATE INDEX IF NOT EXISTS idx_messages_date ON messages(message_date);
 `;
 
